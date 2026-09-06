@@ -16,13 +16,29 @@
 # build. This CMakeLists.txt is a from-scratch component definition over
 # that same source, building the HOST side instead.
 #
+# `src/` here is trimmed to only what an ESP32(-P4) MIDI-host-only build
+# needs (2026-09-06: 3.8MB/181 files -> 720KB/30 files, verified by a clean
+# rebuild producing an identical binary, 0x34e10 bytes, before and after).
+# Removed: every portable/* backend except synopsys/dwc2 (other MCU
+# families -- STM32, NXP, Renesas, WCH, etc. -- entirely unused here); the
+# other-vendor DWC2 per-chip headers and dcd_dwc2.c (device controller,
+# unused -- this is host-only) within synopsys/dwc2 itself, keeping only
+# dwc2_esp32.h, dwc2_type.h, dwc2_common.*, hcd_dwc2.c; every class/*
+# except midi (class/audio/audio.h is kept as a midi_host.h dependency,
+# audio_device.c/h dropped); device/ and typec/ entirely (device-mode core
+# and USB-C PD, both unrelated to a MIDI host build); every osal/*.h except
+# the generic header and the FreeRTOS backend actually used; and
+# tinyusb.mk (this project builds via CMake, not tinyusb's own Makefile).
+#
 # To refresh this vendored copy against a newer TinyUSB version: add
 # `espressif/tinyusb` back to main/idf_component.yml temporarily, run
 # `idf.py reconfigure` to fetch it into managed_components/, copy its `src/`
-# over this component's `src/`, then remove the idf_component.yml
-# dependency again (having both this component and the registry one active
-# at once will produce duplicate-symbol link errors -- they share files
-# like tusb.c, tusb_fifo.c, dwc2_common.c).
+# over this component's `src/` (this reintroduces everything trimmed above
+# -- redo the trim afterward, and verify with a clean `idf.py fullclean &&
+# idf.py build` producing a working binary before trusting it), then remove
+# the idf_component.yml dependency again (having both this component and
+# the registry one active at once will produce duplicate-symbol link
+# errors -- they share files like tusb.c, tusb_fifo.c, dwc2_common.c).
 
 idf_build_get_property(target IDF_TARGET)
 

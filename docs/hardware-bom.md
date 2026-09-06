@@ -10,6 +10,7 @@
 | microSD card | Loaded with pre-processed Salamander Grand Piano soundbank (not the raw SFZ library — see tools/sfz_preprocessor). Use a name-brand card for consistent read latency. P4 reads it over its native SDIO slot — no separate reader breakout needed (see "Hardware that doesn't carry over from RP2350" below). |
 | USB-MIDI controller | Class-compliant, connects to one of the board's USB-A host ports. |
 | (Stretch goal — `docs/recording-and-looping.md`) Treedix DIN-5 breakout jacks + Adafruit MIDI FeatherWing | **Already owned, proven working on the RP2350 prototype** (opto-isolated 5-pin DIN MIDI in/out). Not part of the core MVP bring-up plan — revisit when the DIN MIDI merge stretch goal is picked up. |
+| (Stretch goal — `docs/recording-and-looping.md`, `docs/dynamic-sampling.md`) PCM1808 I2S ADC module | Not yet owned. Audio input for real audio sampling/looping and for the dynamic-sampling rung — the input-side counterpart to the PCM5102 output. Needed by two stretch goals now, not one; worth prioritizing if either is picked up. |
 | (Later) LiPo cell + charge IC (e.g. MCP73831) + boost to 5V | For portable/battery operation. Size after measuring real current draw (bring-up step 8) — this board draws more than a bare RP2350 would. |
 
 ## Hardware that doesn't carry over from RP2350
