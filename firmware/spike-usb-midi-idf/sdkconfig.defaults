@@ -1,0 +1,3 @@
+# Minimal defaults for the USB-MIDI host spike. `idf.py set-target esp32p4`
+# (see Makefile) fills in the rest of sdkconfig on first build.
+CONFIG_IDF_TARGET="esp32p4"

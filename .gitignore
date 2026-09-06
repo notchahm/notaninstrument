@@ -1,0 +1,19 @@
+# Build output (arduino-cli and ESP-IDF) -- regenerate with `make build`
+firmware/*/build/
+
+# ESP-IDF generated config (sdkconfig.defaults is the tracked source of truth)
+firmware/*/sdkconfig
+firmware/*/sdkconfig.old
+
+# ESP-IDF component manager artifacts (not used currently -- components are
+# vendored directly under firmware/*/components/ instead, see
+# firmware/spike-usb-midi-idf/components/tinyusb_host/CMakeLists.txt)
+firmware/*/managed_components/
+firmware/*/dependencies.lock
+
+.DS_Store
+*.swp
+*.swo
+
+# Claude Code session-local runtime state, not project config
+.claude/scheduled_tasks.lock

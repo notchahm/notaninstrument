@@ -1,0 +1,698 @@
+<title>Instrument Without an Instrument</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Piazzolla:ital,opsz,wght@0,8..30,400;0,8..30,500;0,8..30,600;0,8..30,700;1,8..30,400;1,8..30,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #f2eee3;
+    --surface: #e9e3d2;
+    --surface-raised: #ede8da;
+    --ink: #23282e;
+    --ink-soft: #565c63;
+    --ink-faint: #8a8f8a;
+    --line: #c9c1ac;
+    --accent: #a5631f;
+    --accent-ink: #7a4a17;
+    --accent-soft: #e4d2b8;
+    --status-good: #3f7a5c;
+    --status-good-soft: #d9e6dc;
+    --status-bad: #a83f34;
+    --status-bad-soft: #ecd8d2;
+    --status-pending: #3d6a80;
+    --status-pending-soft: #d7e2e6;
+    --shadow: 0 1px 2px rgba(35, 40, 46, 0.06), 0 8px 24px -12px rgba(35, 40, 46, 0.18);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14181c;
+      --surface: #1c2126;
+      --surface-raised: #232830;
+      --ink: #ece7d9;
+      --ink-soft: #a3aab0;
+      --ink-faint: #6d747a;
+      --line: #333b42;
+      --accent: #e0a24b;
+      --accent-ink: #f0bd72;
+      --accent-soft: #3a2e1c;
+      --status-good: #6fc79a;
+      --status-good-soft: #1e2f27;
+      --status-bad: #e18978;
+      --status-bad-soft: #33221f;
+      --status-pending: #86bcd3;
+      --status-pending-soft: #1d2b31;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px -16px rgba(0, 0, 0, 0.6);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #14181c;
+    --surface: #1c2126;
+    --surface-raised: #232830;
+    --ink: #ece7d9;
+    --ink-soft: #a3aab0;
+    --ink-faint: #6d747a;
+    --line: #333b42;
+    --accent: #e0a24b;
+    --accent-ink: #f0bd72;
+    --accent-soft: #3a2e1c;
+    --status-good: #6fc79a;
+    --status-good-soft: #1e2f27;
+    --status-bad: #e18978;
+    --status-bad-soft: #33221f;
+    --status-pending: #86bcd3;
+    --status-pending-soft: #1d2b31;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px -16px rgba(0, 0, 0, 0.6);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Piazzolla", Georgia, "Times New Roman", serif;
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .mono {
+    font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  }
+
+  .wrap {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  a {
+    color: var(--accent-ink);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  h1, h2, h3 {
+    font-weight: 600;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+
+  code, .val {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+
+  /* ---------- Hero ---------- */
+
+  .hero {
+    position: relative;
+    padding: 76px 0 56px;
+    overflow: hidden;
+  }
+
+  .staff {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 15px;
+    -webkit-mask-image: linear-gradient(to right, black 0%, black 55%, transparent 92%);
+            mask-image: linear-gradient(to right, black 0%, black 55%, transparent 92%);
+    pointer-events: none;
+  }
+  .staff span {
+    display: block;
+    height: 1px;
+    background: var(--line);
+  }
+
+  .eyebrow {
+    position: relative;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 22px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .hero h1 {
+    position: relative;
+    font-size: clamp(32px, 5.4vw, 46px);
+    line-height: 1.16;
+    letter-spacing: -0.01em;
+    max-width: 13ch;
+    margin: 0 0 20px;
+  }
+
+  .hero .lede {
+    position: relative;
+    font-size: 19px;
+    line-height: 1.6;
+    color: var(--ink-soft);
+    max-width: 54ch;
+    margin: 0;
+  }
+
+  .hero .lede strong { color: var(--ink); font-weight: 600; }
+
+  /* ---------- Section scaffolding ---------- */
+
+  section {
+    padding: 52px 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .kicker {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 10px;
+  }
+
+  section > h2 {
+    font-size: 26px;
+    margin: 0 0 20px;
+  }
+
+  section > p {
+    max-width: 66ch;
+  }
+
+  p + p { margin-top: 1em; }
+
+  /* ---------- Board comparison ---------- */
+
+  .boards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-top: 28px;
+  }
+  .boards.four {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  @media (max-width: 640px) {
+    .boards { grid-template-columns: 1fr; }
+  }
+
+  .board {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 18px 18px 20px;
+  }
+  .board.chosen {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent) inset;
+  }
+  .board .name {
+    font-weight: 600;
+    font-size: 15.5px;
+    margin: 0 0 3px;
+  }
+  .board .tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    margin: 0 0 14px;
+  }
+  .board dl {
+    margin: 0 0 14px;
+    display: grid;
+    gap: 6px;
+    font-size: 13.5px;
+  }
+  .board dl div { display: flex; justify-content: space-between; gap: 10px; }
+  .board dt { color: var(--ink-faint); }
+  .board dd { margin: 0; text-align: right; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; }
+  .board .verdict {
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    line-height: 1.5;
+    padding-top: 12px;
+    border-top: 1px dashed var(--line);
+    margin: 0;
+  }
+
+  /* ---------- Ladder ---------- */
+
+  .ladder {
+    list-style: none;
+    margin: 32px 0 0;
+    padding: 0;
+    position: relative;
+  }
+  .ladder::before {
+    content: "";
+    position: absolute;
+    left: 17px;
+    top: 8px;
+    bottom: 8px;
+    width: 2px;
+    background: repeating-linear-gradient(
+      to bottom, var(--line) 0 6px, transparent 6px 11px
+    );
+  }
+  .rung {
+    position: relative;
+    padding: 0 0 30px 52px;
+  }
+  .rung:last-child { padding-bottom: 0; }
+  .rung .num {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--surface-raised);
+    border: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent-ink);
+  }
+  .rung.base .num {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg);
+  }
+  .rung h3 {
+    font-size: 17px;
+    margin: 4px 0 6px;
+  }
+  .rung p {
+    font-size: 15px;
+    color: var(--ink-soft);
+    margin: 0;
+    max-width: 58ch;
+  }
+  .rung .doc {
+    display: inline-block;
+    margin-top: 8px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+
+  /* ---------- Status panel ---------- */
+
+  .progress-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 26px 0 32px;
+  }
+  .progress-track {
+    flex: 1;
+    display: flex;
+    gap: 4px;
+  }
+  .progress-seg {
+    height: 8px;
+    flex: 1;
+    border-radius: 2px;
+    background: var(--line);
+  }
+  .progress-seg.done { background: var(--accent); }
+  .progress-label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 13px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+
+  .statuses {
+    display: grid;
+    gap: 10px;
+  }
+  .status {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: start;
+    gap: 4px 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 14px 16px;
+  }
+  .status .label {
+    font-weight: 600;
+    font-size: 14.5px;
+    grid-column: 1;
+  }
+  .status .desc {
+    grid-column: 1 / -1;
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    margin: 2px 0 0;
+  }
+  .badge {
+    grid-column: 2;
+    justify-self: end;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 100px;
+    white-space: nowrap;
+  }
+  .badge.good { background: var(--status-good-soft); color: var(--status-good); }
+  .badge.bad { background: var(--status-bad-soft); color: var(--status-bad); }
+  .badge.pending { background: var(--status-pending-soft); color: var(--status-pending); }
+
+  /* ---------- Next steps ---------- */
+
+  .steps {
+    margin: 24px 0 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: step;
+    display: grid;
+    gap: 12px;
+  }
+  .steps li {
+    counter-increment: step;
+    position: relative;
+    padding-left: 34px;
+    font-size: 15px;
+    color: var(--ink-soft);
+  }
+  .steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 0.05em;
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+  }
+  .steps li strong { color: var(--ink); font-weight: 600; }
+
+  /* ---------- Footer ---------- */
+
+  footer {
+    padding: 36px 0 64px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  footer a { color: var(--ink-faint); }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .hero h1, .hero .lede, .eyebrow {
+      animation: rise 0.5s ease-out backwards;
+    }
+    .eyebrow { animation-delay: 0s; }
+    .hero h1 { animation-delay: 0.06s; }
+    .hero .lede { animation-delay: 0.12s; }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  }
+</style>
+
+<div class="hero">
+  <div class="staff" aria-hidden="true">
+    <span></span><span></span><span></span><span></span><span></span>
+  </div>
+  <div class="wrap">
+    <p class="eyebrow">Notaninstrument &middot; project vision</p>
+    <h1>A MIDI controller is an instrument without an instrument.</h1>
+    <p class="lede">Plug one in and you get silence until a computer joins the conversation.
+      <strong>Notaninstrument</strong> is the small module that finishes the sentence: real
+      multi-sampled sound, standalone, the moment you plug in — no DAW, no laptop, no waiting.</p>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">Why</p>
+    <h2>The AKAI MPK Mini Play proved the gap instead of closing it.</h2>
+    <p>It's portable, it's instant-on, and its built-in synth is a toy — welded to that one
+      controller, with no way to give it better sounds. The actual want is modularity: swap
+      controllers without touching the sound, swap sounds without touching the controller. Two
+      other real products get closer to that (see "Prior art" below) — but none of them get all
+      the way there, which is why three boards were weighed to build one anyway.</p>
+
+    <div class="boards">
+      <div class="board">
+        <p class="name">Teensy&nbsp;4.1</p>
+        <p class="tag">Considered</p>
+        <dl>
+          <div><dt>Audio ecosystem</dt><dd>Best — Teensy Audio Library</dd></div>
+          <div><dt>USB-MIDI host</dt><dd>Not out of the box</dd></div>
+          <div><dt>Cost</dt><dd>Priciest of the three</dd></div>
+        </dl>
+        <p class="verdict">Best audio tooling, but the one board here with no native path to
+          reading a MIDI keyboard over USB.</p>
+      </div>
+      <div class="board">
+        <p class="name">RP2350</p>
+        <p class="tag">Built &amp; proven</p>
+        <dl>
+          <div><dt>SRAM</dt><dd>520&nbsp;KB</dd></div>
+          <div><dt>USB-MIDI host</dt><dd>Working (PIO-USB)</dd></div>
+          <div><dt>First note</dt><dd>Played, with known bugs</dd></div>
+        </dl>
+        <p class="verdict">Proved the whole concept end to end. Also proved its ceiling: 520&nbsp;KB
+          can't hold a real Salamander soundbank — only a toy one, or SD streaming, which
+          reintroduces the exact polyphony problem this project set out to avoid.</p>
+      </div>
+      <div class="board chosen">
+        <p class="name">ESP32-P4</p>
+        <p class="tag">Current bet</p>
+        <dl>
+          <div><dt>PSRAM</dt><dd>32&nbsp;MB</dd></div>
+          <div><dt>Cores</dt><dd>2&times; RISC-V, DSP+FPU</dd></div>
+          <div><dt>USB host</dt><dd>Native HS OTG</dd></div>
+        </dl>
+        <p class="verdict">No RAM ceiling on the soundbank, real DSP headroom for the effects
+          chain — and a much newer USB host stack that isn't proven yet. The harder bet, made on
+          purpose.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">Prior art</p>
+    <h2>Three of these already exist. Here's what they don't do.</h2>
+    <p>Each of these is real, shipping hardware, and each deserves an honest look rather than a
+      straw man — including the one that started this whole line of thinking.</p>
+
+    <div class="boards four">
+      <div class="board">
+        <p class="name">AKAI MPK Mini Play</p>
+        <p class="tag">Started this whole thing</p>
+        <dl>
+          <div><dt>Sound</dt><dd>Small onboard synth</dd></div>
+          <div><dt>Modularity</dt><dd>None &mdash; welded to controller</dd></div>
+          <div><dt>Upgrade path</dt><dd>None</dd></div>
+        </dl>
+        <p class="verdict">Portable and instant-on, which is exactly right. But the sound engine
+          is permanently welded to that one controller &ndash; no way to give it better sounds,
+          no way to reuse that sound engine with a different controller. It proved the gap
+          instead of closing it.</p>
+      </div>
+      <div class="board">
+        <p class="name">Miditech PianoBox</p>
+        <p class="tag">Closest in shape</p>
+        <dl>
+          <div><dt>Sound</dt><dd>128 GM patches</dd></div>
+          <div><dt>Polyphony</dt><dd>Up to 64 voices</dd></div>
+          <div><dt>Instrument swap</dt><dd>None &mdash; fixed</dd></div>
+        </dl>
+        <p class="verdict">Answers "does a computer-free MIDI module exist" with a flat yes.
+          "Piano" is the product name, not the sound &ndash; a General MIDI patch, not a real
+          multi-sampled recording, and nothing about it is swappable.</p>
+      </div>
+      <div class="board">
+        <p class="name">EP-133 K.O. II</p>
+        <p class="tag">Ahead on effects</p>
+        <dl>
+          <div><dt>Sampling</dt><dd>46kHz / 16-bit</dd></div>
+          <div><dt>Effects</dt><dd>6 master + 12 punch-in</dd></div>
+          <div><dt>MIDI in</dt><dd>3.5mm TRS only</dd></div>
+        </dl>
+        <p class="verdict">The actual inspiration behind this project's looping and
+          dynamic-sampling rungs &ndash; genuinely more mature FX and sequencing than anything
+          built here yet. No USB-MIDI host input, though: its 16 pads are the instrument, not a
+          way to play it from a real keyboard.</p>
+      </div>
+      <div class="board chosen">
+        <p class="name">This project</p>
+        <p class="tag">The combination neither offers</p>
+        <dl>
+          <div><dt>MIDI in</dt><dd>Any class-compliant USB</dd></div>
+          <div><dt>Sound</dt><dd>Real multi-sampled instruments</dd></div>
+          <div><dt>Instrument swap</dt><dd>Per-channel, hot-swappable</dd></div>
+        </dl>
+        <p class="verdict">Played from a real keyboard, with real sampled-instrument depth,
+          modular enough to swap instruments and stack effects, looping, and dynamic sampling on
+          top &ndash; rather than living inside one closed box.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">What this becomes</p>
+    <h2>Six rungs, each reusing what the one below it already built.</h2>
+    <p>Not a feature list bolted together after the fact — every later rung leans on a mechanism
+      the earlier one had to get right anyway.</p>
+
+    <ol class="ladder">
+      <li class="rung base">
+        <span class="num">1</span>
+        <h3>Core instrument</h3>
+        <p>Any class-compliant USB-MIDI controller in, a real multi-sampled instrument out —
+          polyphonic, standalone, instant-on. Salamander Grand Piano is the first instrument
+          built, not the ceiling on what this plays.</p>
+        <span class="doc mono">CLAUDE.md</span>
+      </li>
+      <li class="rung">
+        <span class="num">2</span>
+        <h3>Multi-instrument soundbanks</h3>
+        <p>A real instrument library, not just piano — drums, guitar, strings, whatever else gets
+          converted — swappable at runtime via Program Change, from an SD library of
+          <code>.nib</code> soundbanks.</p>
+        <span class="doc mono">docs/multi-instrument-soundbanks.md</span>
+      </li>
+      <li class="rung">
+        <span class="num">3</span>
+        <h3>DSP effects chain</h3>
+        <p>EQ, delay, compression, chorus, reverb on the mixed output. The difference between
+          "plays samples" and "sounds like an instrument."</p>
+        <span class="doc mono">docs/dsp-effects-chain.md</span>
+      </li>
+      <li class="rung">
+        <span class="num">4</span>
+        <h3>Recording &amp; looping</h3>
+        <p>EP-133-style layered looping, run standalone from a second USB-MIDI controller acting
+          as a transport surface — the same multi-device host support rung 1 already needed,
+          generalized.</p>
+        <span class="doc mono">docs/recording-and-looping.md</span>
+      </li>
+      <li class="rung">
+        <span class="num">5</span>
+        <h3>Dynamic sampling</h3>
+        <p>Record a real sound on the device itself — a guitar pluck, a voice, anything into the
+          same input rung 4 already needs — and play it back chromatically as a new instrument,
+          no computer. Comes out as the same <code>.nib</code> format rung 2 already routes.</p>
+        <span class="doc mono">docs/dynamic-sampling.md</span>
+      </li>
+      <li class="rung">
+        <span class="num">6</span>
+        <h3>Dongle / dock modularity</h3>
+        <p>The literal answer to the original itch: a self-powered dongle that also seats into a
+          dock with an amp, real speakers, and physical controls — one brain, never two
+          firmwares.</p>
+        <span class="doc mono">docs/dongle-dock-architecture.md</span>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">Where things actually stand</p>
+    <h2>Bring-up step 2 of 8: is USB-MIDI host even viable on this chip?</h2>
+
+    <div class="progress-row">
+      <div class="progress-track" role="img" aria-label="Bring-up progress: step 2 of 8">
+        <div class="progress-seg done"></div>
+        <div class="progress-seg done"></div>
+        <div class="progress-seg"></div>
+        <div class="progress-seg"></div>
+        <div class="progress-seg"></div>
+        <div class="progress-seg"></div>
+        <div class="progress-seg"></div>
+        <div class="progress-seg"></div>
+      </div>
+      <span class="progress-label">2 / 8</span>
+    </div>
+
+    <div class="statuses">
+      <div class="status">
+        <p class="label">Arduino-ESP32 + Adafruit&nbsp;TinyUSB</p>
+        <span class="badge bad">Dead end</span>
+        <p class="desc">Confirmed by reading the installed toolchain's source, not by guessing:
+          ESP32 host mode is hardcoded to an external MAX3421E chip that isn't in this project's
+          BOM. Can't reach the board's native USB-A ports.</p>
+      </div>
+      <div class="status">
+        <p class="label">Raw ESP-IDF + vendored TinyUSB host</p>
+        <span class="badge pending">Builds clean &middot; untested</span>
+        <p class="desc">Compiles end to end with the real host controller driver and MIDI class
+          included — 216&nbsp;KB binary, zero undefined references. Not yet flashed to real
+          hardware.</p>
+      </div>
+      <div class="status">
+        <p class="label">Platform bet: stay on P4</p>
+        <span class="badge good">Reconfirmed</span>
+        <p class="desc">Explicitly re-examined against falling back to the proven RP2350 path,
+          and kept — the soundbank ceiling in "Why" above is the reason, not inertia.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">What's next</p>
+    <h2>The next unknown needs a soldering iron, not a keyboard.</h2>
+    <ol class="steps">
+      <li><strong>Flash real hardware.</strong> ESP32-P4 board, a class-compliant USB-MIDI
+        controller, <code class="val">firmware/spike-usb-midi-idf</code> — confirm
+        <code class="val">tuh_midi_mount_cb</code> actually fires on connect.</li>
+      <li><strong>If it fires:</strong> continue the bring-up plan in order — display, audio
+        output, soundbank pipeline, single-voice integration, polyphony.</li>
+      <li><strong>If it doesn't:</strong> fall back to a hand-written MIDI class driver on
+        ESP-IDF's native USB Host Library. A longer step 2, not a dead project.</li>
+    </ol>
+  </div>
+</section>
+
+<footer>
+  <span>docs/vision.md &middot; CLAUDE.md &middot; updated <span class="val">2026-09-06</span></span>
+  <span>notaninstrument</span>
+</footer>
