@@ -71,10 +71,15 @@ void setup() {
   initialize_midi_display();
   display_text("notaninstrument\nP4 bring-up");
 
+  // Test tone disabled now that step 4 is confirmed (docs/bring-up-plan.md)
+  // -- was making continuous noise on every subsequent flash/test of other
+  // bring-up steps. initialize_audio_output() (I2S/DAC setup) still runs
+  // so the path stays exercised; only the continuous playback is off.
+  // Uncomment start_audio_output_task() to re-enable the tone.
   initialize_audio_output();
-  start_audio_output_task();
-  Serial.println("Audio: 480Hz test tone playing continuously via PCM5102A "
-                  "(BCK=GPIO4, LRCK=GPIO5, DIN=GPIO6)");
+  // start_audio_output_task();
+  Serial.println("Audio: I2S/PCM5102A initialized, test tone disabled "
+                  "(see notaninstrument-p4.ino setup())");
 }
 
 void loop() {
