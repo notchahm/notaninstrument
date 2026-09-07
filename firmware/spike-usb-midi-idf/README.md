@@ -12,12 +12,21 @@ question: does `tuh_midi_mount_cb` / `tuh_midi_rx_cb` fire when a
 class-compliant USB-MIDI controller is plugged into the board's USB-A host
 port?
 
-## Status: ABANDONED (2026-09-06) -- see ../spike-usb-host-native/ instead
+## Status: PASSED, on real hardware (2026-09-06) -- recommended primary path
 
-This path built cleanly and is kept as a documented dead end, not deleted.
-Real-hardware testing found three real bugs in sequence, the last of which
-was deep enough to invoke CLAUDE.md architecture decision #4's own
-pre-planned fallback:
+Confirmed enumerating a real **AKAI MPK Mini Play mk3** and streaming
+real-time MIDI performance data through `tuh_midi_rx_cb` as pads were
+pressed:
+
+```
+MIDI packet: 09 90 37 19   <- Note On,  ch 0, note 0x37, velocity 0x19
+MIDI packet: 08 80 37 00   <- Note Off, ch 0, note 0x37
+```
+
+Three real bugs were found and fixed on the way here, and one wrong
+conclusion was reached and later corrected -- worth reading in full since
+it changes how you should interpret "it doesn't work" results on this
+board generally, not just for this spike:
 
 1. **Wrong root hub port.** `main/tusb_config.h` set
    `CFG_TUSB_RHPORT0_MODE`, but ESP32-P4 has two DWC2 controllers --
@@ -33,20 +42,35 @@ pre-planned fallback:
    (`esp_hw_support/usb_phy`) before `tusb_init()`, with the exact config
    verified against that component's own test suite
    (`test_apps/usb_phy`, "Init internal UTMI PHY" case), not guessed.
-3. **Connect interrupt never fires.** With both of the above fixed, the
-   board no longer crashed, and `CFG_TUSB_DEBUG=3` showed completely
-   healthy register-level init -- real, non-zero `gsnpsid`/`ghwcfg2-4`
-   reads, "Highspeed UTMI+ PHY init", `hcd_init()`'s own `HPRT_POWER`
-   (VBUS-on) and interrupt-unmask writes all present in the source. But no
-   USB-MIDI controller, and no unrelated test device (a USB mouse) ever
-   produced a single interrupt-level log line, under any condition tried:
-   already connected at boot, live unplug/replug, multiple physical ports.
-   Not fixed -- this is where the pivot to ESP-IDF's native USB Host
-   Library happened instead, and that path immediately succeeded (see
-   `../spike-usb-host-native/README.md`).
+3. **"Connect interrupt never fires" -- wrong conclusion, corrected.** With
+   both of the above fixed, the board no longer crashed, and
+   `CFG_TUSB_DEBUG=3` showed completely healthy register-level init --
+   real, non-zero `gsnpsid`/`ghwcfg2-4` reads, "Highspeed UTMI+ PHY init",
+   `hcd_init()`'s own `HPRT_POWER` (VBUS-on) write present in the source.
+   But no USB-MIDI controller, and no unrelated test device (a USB mouse)
+   ever produced a single interrupt-level log line, under any condition
+   tried. This looked like a real driver bug deep enough to invoke
+   CLAUDE.md decision #4's fallback, and the project pivoted to
+   `../spike-usb-host-native/` (ESP-IDF's native USB Host Library)
+   instead, which passed immediately. **But that pivot was based on a
+   false premise**: while testing the native path, it turned out this
+   board's 4 USB-A ports aren't equal -- only the ones *not* adjacent to
+   the documented host/device jumper actually deliver VBUS power to a
+   bus-powered device. Every TinyUSB test above had been run on the
+   jumper-adjacent (unpowered) port. The register-level diagnostics only
+   proved the *software* executed correctly; they never proved the port
+   had power. Re-flashing this exact build (no code changes) onto the
+   correct port worked immediately and completely. TinyUSB was never
+   broken -- the test setup was.
 
-Kept in the repo for the documented bugs above, in case a future TinyUSB
-fork version fixes the interrupt issue and this path is worth revisiting.
+**Net result**: both this spike and `../spike-usb-host-native/` work on
+real hardware, on the correct port. This one is the recommended path
+going forward -- TinyUSB's `midi_host.c` gives ready-made USB-MIDI
+event-packet parsing for free, where the native USB Host Library path
+would need a hand-written class driver to reach the same point.
+
+**Known hardware caveat**: use a non-jumper-adjacent USB-A port. See
+`docs/hardware-bom.md` for the working theory on why.
 
 ## Prerequisites
 
@@ -111,29 +135,20 @@ those are jumpered to host mode and are what this spike is testing against.
 
 - **Pass:** plugging in a USB-MIDI controller logs `USB device mounted`
   followed by `MIDI device mounted`, and pressing keys on the controller
-  logs `MIDI packet: ...` lines.
+  logs `MIDI packet: ...` lines. Confirmed -- see above.
 - **Fail:** nothing logs on connect, or the device enumerates
-  (`tuh_mount_cb` fires) but `tuh_midi_mount_cb` never does (MIDI class
-  driver not recognizing the interface), or a crash/hang on connect.
-
-Per CLAUDE.md decision #4, a pass here (or on the Arduino side) means P4 USB
-MIDI host is viable at all right now -- worth knowing even if the project
-ultimately builds on the other toolchain, since it rules out "TinyUSB on P4
-just doesn't work yet" as the failure mode.
+  (`tuh_mount_cb` fires) but `tuh_midi_mount_cb` never does, or a
+  crash/hang on connect. **If you hit this, check the USB-A port first**
+  (see "Known hardware caveat" above) before suspecting the driver --
+  that's exactly what produced a false "fail" here.
 
 ## Known risk / things to check if it doesn't flash or doesn't enumerate
 
+- **Wrong USB-A port**: by far the most likely cause if this stops working
+  -- see "Known hardware caveat" above. Confirmed to produce a completely
+  silent, no-crash, no-log "fail" that looks exactly like a driver bug.
 - **Known upstream bug**: a divide-by-zero in the DWC2 host driver on
   device connect has been reported (hathach/tinyusb#3525, filed against the
-  esp32-arduino port but the underlying driver is shared). If you hit a
-  crash right at device-connect, check whether a newer component version
-  fixes it before assuming the board/wiring is at fault.
-- **RHPORT**: `main/tusb_config.h` assumes root hub port 0 is wired to the
-  board's USB-A host jacks (via the onboard CH334F hub). Unconfirmed --
-  verify against the board's actual USB routing if nothing enumerates at
-  all.
-- If TinyUSB host mode turns out broken on P4 entirely, CLAUDE.md's
-  documented fallback is a hand-written MIDI class driver directly on
-  ESP-IDF's native `usb_host` library (modeled on `usb_host_cdc_acm`,
-  bypassing TinyUSB altogether) -- a bigger undertaking than this spike, not
-  attempted here.
+  esp32-arduino port but the underlying driver is shared). Not hit in
+  testing here, but worth knowing about if a crash appears right at
+  device-connect on a different TinyUSB version.

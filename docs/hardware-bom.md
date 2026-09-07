@@ -36,7 +36,11 @@ to the documented host/device jumper** delivered VBUS power to a
 bus-powered test device (a USB mouse showed no sign of life on the
 jumper-adjacent port, but powered up immediately on a different one; the
 same non-jumper-adjacent port then successfully enumerated both the mouse
-and an AKAI MPK Mini Play mk3 via `firmware/spike-usb-host-native/`).
+and an AKAI MPK Mini Play mk3, confirmed independently via both
+`firmware/spike-usb-host-native/` and `firmware/spike-usb-midi-idf/`
+(TinyUSB) — the latter had been misdiagnosed as having a driver bug before
+this port finding explained the real cause; see that spike's README for
+the full story).
 
 Working theory, not confirmed against the schematic: the jumper-adjacent
 port is the board's one genuine dual-role OTG connector, which likely

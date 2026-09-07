@@ -1,12 +1,25 @@
 # spike-usb-host-native
 
 Bring-up step 2 (`docs/bring-up-plan.md`) — **PASSED, on real hardware,
-2026-09-06.** This is the winning path: ESP-IDF's own first-party **USB
-Host Library** (`usb/usb_host.h`, the `espressif/usb` component), not
-TinyUSB. See `../spike-usb-midi-idf/README.md` for why that path was
-abandoned — three real bugs found on real hardware, the last of which (the
-driver's own connect/disconnect interrupt never firing) was deep enough to
-invoke CLAUDE.md architecture decision #4's own pre-planned fallback.
+2026-09-06**, but now a **proven fallback, not the primary path** — see
+`../spike-usb-midi-idf/README.md` for the full, corrected story.
+
+Short version: this path (ESP-IDF's own first-party **USB Host Library**,
+`usb/usb_host.h`, not TinyUSB) was originally reached for after
+`spike-usb-midi-idf`'s TinyUSB build appeared to hit a real driver bug
+(its connect/disconnect interrupt never firing) on real hardware. This
+path passed immediately, which looked like confirmation TinyUSB was
+genuinely broken. **It wasn't** — the real cause, discovered afterward, was
+that every TinyUSB test had been run on this board's one USB-A port that
+doesn't deliver power at all (see `docs/hardware-bom.md`). Once TinyUSB
+was re-tested on the correct port, it worked too, and more completely: its
+`midi_host.c` gives ready-made USB-MIDI event-packet parsing for free,
+where this path's `class_driver.c` only dumps raw descriptors — reaching
+MIDI parsing here would mean hand-writing a class driver on top of it.
+
+Kept as a working, real-hardware-confirmed reference and fallback, not
+deleted — it's genuinely useful evidence that this board's USB-A host
+hardware itself works correctly, independent of which USB stack drives it.
 
 This is Espressif's own `examples/peripherals/usb/host/usb_host_lib`
 example, copied in with one fix (see below) — not written from scratch.
@@ -79,11 +92,13 @@ board's serial port passed through.
 
 ## What's next
 
-This spike only dumps USB descriptors on connect (`class_driver.c`'s
-`action_open_dev()` path) — it doesn't parse MIDI messages. The next real
-step is writing an actual MIDI class driver on top of this proven
-foundation: open the MIDI Streaming interface's bulk endpoints (EP2 OUT /
-EP3 IN in the descriptor dump above) and parse USB-MIDI event packets,
-modeled on ESP-IDF's `usb_host_cdc_acm` component as CLAUDE.md originally
-planned (MIDI's bulk-endpoint shape is structurally similar to CDC's data
-endpoints).
+Not this path, for now — `../spike-usb-midi-idf/` already has working
+MIDI event parsing via TinyUSB's `midi_host.c`, confirmed on real
+hardware, and is the recommended path going forward. This spike stays as
+a working reference in case TinyUSB ever needs to be revisited (a real
+regression, an unrelated future project needing a lighter dependency,
+etc.) — if that day comes, the remaining work is writing a MIDI class
+driver on top of this foundation: open the MIDI Streaming interface's
+bulk endpoints (EP2 OUT / EP3 IN in the descriptor dump above) and parse
+USB-MIDI event packets, modeled on ESP-IDF's `usb_host_cdc_acm` component
+as CLAUDE.md originally planned.

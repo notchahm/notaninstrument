@@ -35,40 +35,56 @@ Standalone sketch, not the full project: confirm the board's native USB-A
 host port can enumerate a class-compliant USB-MIDI controller at all,
 before building anything else on top of it.
 
-Three paths were tried, in order, each abandoned or confirmed based on real
-evidence, not assumption -- full detail in CLAUDE.md architecture decision
-#4:
+Several paths were tried, in order, based on real evidence at each step --
+full detail in CLAUDE.md architecture decision #4:
 1. Arduino-ESP32 + Adafruit TinyUSB -- confirmed dead end via static
    analysis alone, before touching hardware (forces an external MAX3421E
    host chip not in this project's BOM).
 2. Raw ESP-IDF + TinyUSB (vendored host-mode component) -- built clean,
-   but real-hardware testing surfaced three real bugs in sequence (wrong
-   root hub port for this board's dual-DWC2-controller P4; a stubbed-out
-   PHY/clock init causing a register-access crash, fixed via ESP-IDF's own
-   `usb_new_phy()`; and finally the driver's own connect/disconnect
-   interrupt never firing at all even with everything else confirmed
-   healthy). Abandoned at that third issue.
-3. **ESP-IDF's native USB Host Library (not TinyUSB)** --
+   but real-hardware testing surfaced two real bugs (wrong root hub port
+   for this board's dual-DWC2-controller P4; a stubbed-out PHY/clock init
+   causing a register-access crash, fixed via ESP-IDF's own
+   `usb_new_phy()`). After fixing both, the driver's own connect/disconnect
+   interrupt appeared to never fire at all despite otherwise-healthy
+   register-level init -- this *looked* like a third real bug, deep enough
+   to trigger a pivot to option 3 below.
+3. ESP-IDF's native USB Host Library (not TinyUSB) --
    `firmware/spike-usb-host-native/`, Espressif's own `usb_host_lib`
    example with one fix (the stock example's `peripheral_map = BIT0`
    likely selects the wrong -- FS, not HS -- peripheral on this board;
    `peripheral_map = 0` selects the documented default, HS on HS-capable
-   targets). **Confirmed enumerating a real AKAI MPK Mini Play mk3**, full
-   descriptor set including its actual MIDI Streaming interface.
+   targets). This enumerated a real AKAI MPK Mini Play mk3 immediately,
+   which looked like confirmation that TinyUSB's interrupt issue was real.
+4. **It wasn't.** While testing option 3, a real hardware finding emerged:
+   of this board's 4 USB-A ports, only the ones *not* adjacent to the
+   documented host/device jumper deliver VBUS power to a bus-powered
+   device at all. Every test of option 2 had been run on the
+   jumper-adjacent (unpowered) port -- the register-level diagnostics only
+   proved the software executed correctly, never that the port had power.
+   **Re-flashing option 2's exact build (no code changes) onto the
+   correct port worked immediately and completely**: full enumeration,
+   both `tuh_mount_cb`/`tuh_midi_mount_cb` firing, and real-time MIDI
+   performance data streaming correctly through `tuh_midi_rx_cb` as pads
+   were pressed on the real controller.
 
-One open hardware finding along the way, not a firmware bug: of this
-board's 4 USB-A ports, only the ones *not* adjacent to the documented
-host/device jumper delivered VBUS power to a bus-powered test device.
-Working theory (unconfirmed against the schematic): the jumper-adjacent
-port is the board's one true dual-role OTG connector, needing its own
-board-specific VBUS-enable GPIO that a generic host example has no way to
-know about, while the other ports are simpler always-on fixed host ports.
-Use a non-jumper-adjacent port for now.
+**Net result: both option 2 (TinyUSB) and option 3 (native USB Host
+Library) work on real hardware, on the correct port.** Option 2 is the
+recommended path going forward -- its `midi_host.c` gives ready-made
+USB-MIDI event-packet parsing for free, where option 3 only dumps raw
+descriptors and would need a hand-written class driver to reach the same
+point.
 
-**Next**: the working spike only dumps USB descriptors -- it doesn't parse
-MIDI messages yet. Writing that class driver (open the MIDI Streaming
-interface's bulk endpoints, parse USB-MIDI event packets) on top of this
-now-proven foundation is the next real step, before moving on to step 3.
+One still-relevant hardware finding, not a firmware bug: use a
+non-jumper-adjacent USB-A port. Working theory (unconfirmed against the
+schematic): the jumper-adjacent port is the board's one true dual-role OTG
+connector, needing its own board-specific VBUS-enable GPIO that a generic
+example has no way to know about, while the other ports are simpler
+always-on fixed host ports. See `docs/hardware-bom.md`.
+
+**Next**: `firmware/spike-usb-midi-idf` already parses real MIDI events
+via `tuh_midi_rx_cb` -- the next real step is wiring that into actual
+`start_note`/`stop_note` calls (CLAUDE.md architecture decisions #1-#3),
+before moving on to step 3 below.
 
 ## 3. Display bring-up (SSD1306)
 Wire OLED to a free I2C bus (distinct from the onboard ES8311 codec's bus, if
