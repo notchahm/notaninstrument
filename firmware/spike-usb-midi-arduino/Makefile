@@ -26,8 +26,13 @@ BUILD_DIR    := $(CURDIR)/build
 # for Adafruit TinyUSB to claim as HOST, while
 # Upload Mode = "UART0 / Hardware CDC" (default) keeps Serial and flashing
 # on UART0 (the FTDI port) instead of contending for the same OTG port. No
-# extra menu options needed.
-FQBN         := esp32:esp32:esp32p4
+# extra menu options needed there. ChipVariant IS needed, though: it
+# defaults to "Before v3.00" (prev3), but real hardware tested 2026-09-06
+# (see docs/bring-up-plan.md step 1) is silicon revision v3.1 -- prev3
+# causes an immediate CHIP_LP_WDT_RESET boot loop on this board, confirmed
+# on ../notaninstrument-p4/. Set proactively here even though this sketch
+# doesn't currently compile for its own separate (Adafruit TinyUSB) reason.
+FQBN         := esp32:esp32:esp32p4:ChipVariant=postv3
 
 ESP32_CORE_URL := https://espressif.github.io/arduino-esp32/package_esp32_index.json
 

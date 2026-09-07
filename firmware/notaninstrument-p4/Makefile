@@ -20,8 +20,12 @@ BUILD_DIR    := $(CURDIR)/build
 # disabled on this board definition -- must be enabled explicitly or the
 # bring-up sketch's PSRAM check will always report "not detected" even
 # though the board has it. FlashSize matches the board's actual 16MB flash
-# (default is 4MB).
-FQBN         := esp32:esp32:esp32p4:PSRAM=enabled,FlashSize=16M
+# (default is 4MB). ChipVariant defaults to "Before v3.00" (prev3) but the
+# real board flashed 2026-09-06 reported "Chip type: ESP32-P4 (revision
+# v3.1)" -- the prev3 default caused an immediate CHIP_LP_WDT_RESET boot
+# loop (confirmed via raw serial capture: ROM bootloader repeating every
+# ~1s, app code never reached) that ChipVariant=postv3 fixed.
+FQBN         := esp32:esp32:esp32p4:PSRAM=enabled,FlashSize=16M,ChipVariant=postv3
 
 ESP32_CORE_URL := https://espressif.github.io/arduino-esp32/package_esp32_index.json
 

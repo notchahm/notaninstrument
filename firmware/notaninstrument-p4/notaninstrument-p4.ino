@@ -12,20 +12,17 @@
 
 #define SERIAL_BAUD 115200
 #define BLINK_INTERVAL_MS 500
+// Repeats the boot banner periodically, not just once at boot -- a serial
+// monitor attaching even a second late (the common case: reset happens
+// before a host-side reader has opened the port) would otherwise never see
+// chip/PSRAM info at all.
+#define STATUS_INTERVAL_MS 10000
 
 static bool led_state = false;
 static unsigned long last_toggle_ms = 0;
+static unsigned long last_status_ms = 0;
 
-void setup() {
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
-
-  Serial.begin(SERIAL_BAUD);
-  unsigned long wait_start = millis();
-  while (!Serial && millis() - wait_start < 3000) {
-    // give a USB-CDC/UART bridge time to enumerate; don't hang forever
-  }
-
+static void print_status_banner() {
   Serial.println();
   Serial.println("=== notaninstrument P4 bring-up ===");
   Serial.printf("Chip model:      %s\n", ESP.getChipModel());
@@ -41,7 +38,19 @@ void setup() {
     Serial.println("PSRAM size:      NOT DETECTED -- check board config "
                     "(PSRAM mode/menu option) before proceeding past bring-up step 1");
   }
+}
 
+void setup() {
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
+  Serial.begin(SERIAL_BAUD);
+  unsigned long wait_start = millis();
+  while (!Serial && millis() - wait_start < 3000) {
+    // give a USB-CDC/UART bridge time to enumerate; don't hang forever
+  }
+
+  print_status_banner();
   Serial.println("Blinking LED_PIN, logging a tick every toggle...");
 }
 
@@ -52,5 +61,9 @@ void loop() {
     led_state = !led_state;
     digitalWrite(LED_PIN, led_state ? HIGH : LOW);
     Serial.printf("[%lu ms] tick, led=%s\n", now, led_state ? "ON" : "OFF");
+  }
+  if (now - last_status_ms >= STATUS_INTERVAL_MS) {
+    last_status_ms = now;
+    print_status_banner();
   }
 }

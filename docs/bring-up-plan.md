@@ -5,11 +5,30 @@ as possible, before other work is built on top of it. Steps 3 and 4 don't
 depend on step 2's outcome and can proceed in parallel if step 2 is blocked
 or being re-worked.
 
-## 1. Toolchain and basic bring-up
+## 1. Toolchain and basic bring-up -- DONE (2026-09-06, confirmed on real hardware)
 Install Arduino-ESP32 (or ESP-IDF) targeting P4, flash a blink/serial test,
 confirm the board enumerates. Check serial boot log for PSRAM size reported
 as ~32MB — catch a PSRAM misconfiguration now, not after the soundbank
 loader is built against it.
+
+Confirmed via `firmware/notaninstrument-p4` flashed over the board's UART
+port (COM5 on the Windows host, passed through to WSL2 via usbipd-win as
+`/dev/ttyACM0` -- the CH343 bridge chip enumerates as USB CDC-ACM, not the
+older vendor-driver path): `Chip model: ESP32-P4`, `Chip revision: 301`
+(v3.1), `CPU cores: 2`, `CPU freq: 400 MHz`, `Flash size: 16777216 bytes`
+(16MB exactly), `PSRAM size: 33554432 bytes` (32MB exactly) -- every number
+matches `docs/hardware-bom.md` and CLAUDE.md's hardware section precisely.
+
+**Real bug found and fixed along the way**: the `esp32:esp32:esp32p4` FQBN's
+`ChipVariant` option defaults to "Before v3.00" (`prev3`), but this board's
+actual silicon is revision v3.1. That mismatch caused an immediate
+`CHIP_LP_WDT_RESET` boot loop -- the ROM bootloader repeating every ~1
+second, app code never reached, confirmed via raw serial capture (`stty` +
+`cat` on the device, since `arduino-cli monitor` produced no output when
+captured non-interactively). Adding `ChipVariant=postv3` to the FQBN in
+`firmware/notaninstrument-p4/Makefile` fixed it immediately. Worth checking
+for the same `ChipVariant` mismatch before assuming any future P4 boot
+issue is something else.
 
 ## 2. USB MIDI host spike test (do this before anything else substantial)
 Standalone sketch, not the full project: call `USBHost.begin()`, log whether
