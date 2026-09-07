@@ -93,11 +93,32 @@ shells as real host ports. The working shell matches the mux's *default*
 state (an unpopulated/off-position jumper floats the select line into the
 single-port path via a pull-up); the other 3 sit on a hub whose upstream
 was therefore never connected, so they power up but never enumerate
-anything. **Untried next step**: physically move the jumper cap to bridge
-H3 pins 1-2 (the only position that forces the mux the other way) and
-retest — expect the single working shell to go dead and the other 3 to
-come alive instead. See `docs/hardware-bom.md` for the full schematic
-breakdown and exact pin references.
+anything.
+
+**Jumper test actually run — theory didn't hold as predicted.** Moving
+the real physical jumper (silkscreen "HOST"/"Device", next to the top USB
+module only) to its other position killed every port, not just swapped
+which ones worked; moving it back required a full power removal (every
+cable) to restore the original single-working-port state. A same-module
+port pair that should be electrically symmetric per the schematic also
+behaved asymmetrically. Chasing this further needs real continuity/scope
+probing on the board, not more schematic reading — parked for now. See
+`docs/hardware-bom.md`'s "USB-A port behavior" section for the full
+history, including a lead that was checked and downgraded rather than
+confirmed (the CH334F's crystal load caps are unpopulated in the
+schematic, but WCH's own datasheet shows this design isn't wired for
+crystal-free operation, so that alone doesn't explain the failure without
+physically checking the real board).
+
+**Practical resolution — multi-controller input works today anyway**:
+plug a standard external USB hub into the one port that works.
+`firmware/spike-usb-midi-idf` already has `CFG_TUH_HUB` and multi-device
+support enabled and doesn't care whether a hub is onboard or external —
+confirmed on real hardware with 2 simultaneous MIDI controllers through
+an external hub, both mounting as distinct `tuh_midi` interfaces and
+streaming independent, correctly-decoded data concurrently. This is now
+the recommended path for multi-controller input; the onboard 4-port
+oddity is no longer a blocker.
 
 **Next**: `firmware/spike-usb-midi-idf` already parses real MIDI events
 via `tuh_midi_rx_cb` -- the next real step is wiring that into actual

@@ -108,14 +108,49 @@ shell wired directly to the mux's HSD2 side (bypassing the hub entirely)
 works, because that's the only path `SEL`'s default state actually
 connects.
 
-**Concrete next test**: physically add or move a jumper cap across H3
-pins **1-2** (the only position that forces `SEL` LOW) and retest. Expect
-the currently-working single shell to go dead, and the other 3 (now fed
-through the hub) to start enumerating instead — that would confirm the
-theory end-to-end and unlock 3 simultaneous host ports. If nothing
-changes, or the same one shell keeps working regardless, H3 isn't the
-physical jumper actually being switched (or the CH334F hub has a separate
-problem) and this needs re-opening from the schematic again.
+**Test actually run, 2026-09-06 — theory did not hold, and the practical
+answer is now settled a different way.** Moving the physical jumper (its
+real silkscreen labels are "HOST" / "Device", located next to the *top*
+USB-A module only — see the official board photo) to the other position
+made *every* port stop responding, including the one that normally works
+— not the predicted "3 come alive, 1 dies" swap. Moving it back and doing
+a **full power removal** (every cable, not just the jumper) restored the
+original state: exactly 1 port working, no more. A same-module,
+supposedly-symmetric hub port pair also behaved asymmetrically (one
+side worked, the other never has), which the schematic alone can't
+explain — that would need actual continuity/scope probing on the real
+board to chase further, which is out of scope for now.
+
+Two things worth keeping from this: (1) **any jumper change on this board
+needs a full power cycle (unplug every cable), not just a reset or
+UART-cable replug**, to take effect cleanly — a partial re-power left it
+in a stuck state once. (2) The CH334F's own 12MHz crystal (X1) has its
+load capacitors (C133/C134) marked NC in the schematic — initially
+suspected as the root cause (a dead hub clock would explain every
+symptom above as one cause), but checked against WCH's own CH334/335
+datasheet and downgraded back to unconfirmed: crystal-free operation is a
+factory-ordered chip variant that also requires the `XI` pin strapped to
+GND, and this schematic wires `XI`/`XO` to the real crystal, not to GND —
+so the design expects a working external crystal, not crystal-free mode.
+Whether the missing load caps alone are enough to actually stop it
+oscillating depends on that specific crystal's rated load capacitance,
+which isn't known from the schematic alone. **Root cause remains
+genuinely unconfirmed** — would need physical inspection of the real
+board (is X1 itself populated, not just its caps) or a scope on
+XI/XO to settle, which is out of scope for now given the workaround
+below.
+
+**Practical resolution, confirmed working**: rather than debug the
+onboard hub further, plug a standard external USB hub into the one
+port that works. TinyUSB's host stack already has `CFG_TUH_HUB` and
+multi-device support enabled (`firmware/spike-usb-midi-idf/main/tusb_config.h`)
+and doesn't care whether a hub is onboard or external — confirmed on real
+hardware with 2 simultaneous class-compliant MIDI controllers through an
+external hub, both mounting as distinct interfaces (`idx=0`, `idx=1`) and
+streaming independent, correctly-decoded Note On/Off/CC data
+concurrently. **This is the recommended path for multi-controller input
+going forward** — revisit the onboard 4-port oddity only if an external
+hub ever becomes a real constraint (e.g. enclosure space).
 
 ## Pin assignments
 

@@ -107,6 +107,24 @@ would need a hand-written class driver to reach the same point.
 **Known hardware caveat**: use a non-jumper-adjacent USB-A port. See
 `docs/hardware-bom.md` for the working theory on why.
 
+**Update 2026-09-06 — multiple simultaneous MIDI controllers confirmed.**
+Only 1 of the board's 4 USB-A shells has ever actually worked (see
+`docs/hardware-bom.md`'s "USB-A port behavior" for the full onboard-hub
+investigation, which didn't fully resolve). That's not a blocker for
+polyphony-of-controllers, though: plugging a standard external USB hub
+into that one working port and connecting 2 class-compliant MIDI
+controllers through it worked immediately, no firmware changes needed
+(`CFG_TUH_HUB`/`CFG_TUH_MIDI 4`/`CFG_TUH_DEVICE_MAX 4` in
+`main/tusb_config.h` were already set up for this). Both mounted as
+distinct `tuh_midi` interfaces and streamed independent, correctly
+`idx`-tagged Note On/Off/CC data concurrently:
+
+```
+I (241104) usb_midi_spike: MIDI packet [idx=0]: 09 90 39 58
+...
+I (242584) usb_midi_spike: MIDI packet [idx=1]: 08 80 39 00
+```
+
 ## Prerequisites
 
 - ESP-IDF (v6.1 tested; anything v5.x+ with esp32p4 support should work)

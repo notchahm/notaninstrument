@@ -35,15 +35,18 @@ reference; `vision.md` is the map connecting it to
   - Native High-Speed USB 2.0 OTG. The board actually has 4 physical USB-A
     shells (two stacked dual-USB-A connectors), confirmed via the vendor
     schematic (`docs/datasheets/ESP32-P4-WIFI6-DEV-KIT-schematic.pdf`) to be
-    wired as a CH334F hub (3 downstream shells) plus a 2:1 data mux
-    selecting whether the P4's native USB feeds that hub or a 4th shell
-    directly as a lone OTG port — mutually exclusive by hardware design.
-    **Currently only that one mux-selected shell actually works**; the
-    other 3 (hub-fed) deliver VBUS power but never enumerate anything,
-    consistent with the hub's upstream never being connected in the mux's
-    current (default/floating) state. Moving the physical jumper is the
-    next untried step to reach 3 simultaneous host ports instead of 1. See
-    "USB-A port behavior" in `docs/hardware-bom.md` for the full finding.
+    wired as a CH334F hub plus a 2:1 data mux, switched by the board's
+    physical "HOST"/"Device" jumper. **In practice only 1 of the 4 shells
+    has ever worked**, regardless of jumper position (tested both — the
+    other position kills every port instead of the predicted 3-ports-alive
+    swap) — this doesn't fully match the schematic's symmetric-hub
+    prediction and would need real continuity/scope probing to fully
+    explain, not just more schematic reading. **Not a blocker**: an
+    external USB hub plugged into the one working port gives multiple
+    simultaneous MIDI controllers today, confirmed on real hardware (2
+    controllers, both decoding correctly, concurrently) — this is the
+    recommended path for multi-controller input. See "USB-A port
+    behavior" in `docs/hardware-bom.md` for the full history.
   - Native SDIO 3.0 microSD slot
   - Onboard ES8311 audio codec — **mono only**, not used; we drive our own
     stereo DAC instead (see below)
