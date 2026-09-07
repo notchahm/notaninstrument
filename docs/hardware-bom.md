@@ -52,10 +52,21 @@ that GPIO (if it exists) is identified. See
 
 ## Pin assignments
 
-TBD — fill in once the board is in hand and its pinout documentation/silkscreen
-is checked. Things to confirm:
-- Which I2C pins are free for the SSD1306, and whether they conflict with the
-  onboard ES8311 codec's I2C bus
+| Signal | Pin | Notes |
+|---|---|---|
+| I2C SDA (SSD1306) | GPIO7 | Confirmed working 2026-09-06, real hardware. |
+| I2C SCL (SSD1306) | GPIO8 | Confirmed working 2026-09-06, real hardware. |
+
+An I2C bus scan on these pins (`firmware/notaninstrument-p4`'s
+`scan_i2c_bus()`) found the SSD1306 at `0x3C` and a second device at
+`0x18` -- almost certainly the onboard ES8311 codec, whose default I2C
+address is commonly `0x18`. **This confirms GPIO7/GPIO8 are the same I2C
+bus the ES8311 is on, not a separate free bus** -- but that's not
+currently a problem, since the two devices' addresses don't collide and
+both ACK correctly. Worth re-checking if the ES8311 is ever actually used
+for anything (it isn't currently -- see "What this is" in CLAUDE.md).
+
+Still TBD — fill in once checked:
 - Which I2S pins to use for the PCM5102 (a full I2S peripheral separate from
   whatever the ES8311 uses, if that codec is left connected at all)
 - Whether the board exposes a labeled 5V rail on the GPIO header for future

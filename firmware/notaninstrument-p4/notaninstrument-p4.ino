@@ -1,7 +1,10 @@
-// Bring-up step 1 (docs/bring-up-plan.md): toolchain smoke test, not the
-// real firmware. Blinks an LED and logs chip/PSRAM info over serial so we
-// can confirm the board enumerates and PSRAM reports ~32MB before building
-// anything else on top of it.
+// Bring-up steps 1 + 3 (docs/bring-up-plan.md): toolchain smoke test, not
+// the real firmware. Blinks an LED, logs chip/PSRAM info over serial, and
+// drives an SSD1306 OLED (midi_display.cpp) with a periodic demo cycle so
+// both the serial and I2C display paths are proven before building
+// anything else on top of them.
+
+#include "midi_display.h"
 
 // TBD: exact onboard LED GPIO is unconfirmed for the Waveshare
 // ESP32-P4-WIFI6-DEV-KIT (see docs/hardware-bom.md, "Pin assignments").
@@ -17,10 +20,16 @@
 // before a host-side reader has opened the port) would otherwise never see
 // chip/PSRAM info at all.
 #define STATUS_INTERVAL_MS 10000
+// How often to cycle the OLED to a new demo note -- separate from
+// STATUS_INTERVAL_MS so the display and serial banner don't have to
+// refresh in lockstep.
+#define DISPLAY_DEMO_INTERVAL_MS 2000
 
 static bool led_state = false;
 static unsigned long last_toggle_ms = 0;
 static unsigned long last_status_ms = 0;
+static unsigned long last_display_demo_ms = 0;
+static int demo_note_index = 0;
 
 static void print_status_banner() {
   Serial.println();
@@ -52,6 +61,9 @@ void setup() {
 
   print_status_banner();
   Serial.println("Blinking LED_PIN, logging a tick every toggle...");
+
+  initialize_midi_display();
+  display_text("notaninstrument\nP4 bring-up");
 }
 
 void loop() {
@@ -65,5 +77,17 @@ void loop() {
   if (now - last_status_ms >= STATUS_INTERVAL_MS) {
     last_status_ms = now;
     print_status_banner();
+    scan_i2c_bus();
+  }
+  if (now - last_display_demo_ms >= DISPLAY_DEMO_INTERVAL_MS) {
+    last_display_demo_ms = now;
+    // No real MIDI input wired up yet (that's spike-usb-midi-idf, a
+    // separate ESP-IDF project) -- cycle fake note data so display_note()
+    // (text layout, velocity bar) is visually exercised without one.
+    int channel = demo_note_index % 16;
+    int note = 60 + (demo_note_index % 12);
+    int velocity = (demo_note_index * 17) % 128;
+    display_note(channel, note, velocity);
+    demo_note_index++;
   }
 }

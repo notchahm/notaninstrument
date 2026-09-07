@@ -1,0 +1,6 @@
+# k0i05/esp_ssd1306: actively-maintained ESP-IDF-native SSD1306 driver
+# (uses the modern driver/i2c_master.h API). Espressif's own
+# `espressif/ssd1306` registry component is deprecated -- this is not a
+# fallback choice, it's the recommended one.
+dependencies:
+  k0i05/esp_ssd1306: "*"

@@ -12,6 +12,19 @@ question: does `tuh_midi_mount_cb` / `tuh_midi_rx_cb` fire when a
 class-compliant USB-MIDI controller is plugged into the board's USB-A host
 port?
 
+**Now also integrates bring-up step 3** (the SSD1306 display, via the
+`k0i05/esp_ssd1306` component -- `espressif/ssd1306` is deprecated):
+incoming Note On/Off and Control Change messages render live on the OLED
+in real time -- channel (1-16, the human convention, not the raw 0-15
+wire value), note name in scientific pitch notation (e.g. `A4` = 440Hz,
+not just the raw note number) or `CCnn` for control changes, and a
+velocity/value bar. Display updates are rate-limited to 20Hz
+(`DISPLAY_MIN_UPDATE_INTERVAL_US`) and write fixed-width fields in place
+rather than clearing the whole screen each time -- both were real, visible
+problems (lag and flicker respectively) when a fast-streaming controller
+(a pot or joystick) was scrubbed continuously, confirmed and fixed on real
+hardware.
+
 ## Status: PASSED, on real hardware (2026-09-06) -- recommended primary path
 
 Confirmed enumerating a real **AKAI MPK Mini Play mk3** and streaming

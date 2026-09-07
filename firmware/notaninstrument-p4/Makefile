@@ -50,6 +50,7 @@ setup:
 	$(ARDUINO_CLI) config add board_manager.additional_urls $(ESP32_CORE_URL)
 	$(ARDUINO_CLI) core update-index
 	$(ARDUINO_CLI) core install esp32:esp32
+	$(ARDUINO_CLI) lib install "Adafruit SSD1306" "Adafruit GFX Library"
 
 list-ports:
 	$(ARDUINO_CLI) board list

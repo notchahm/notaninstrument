@@ -89,11 +89,47 @@ via `tuh_midi_rx_cb` -- the next real step is wiring that into actual
 `start_note`/`stop_note` calls (CLAUDE.md architecture decisions #1-#3),
 before moving on to step 3 below.
 
-## 3. Display bring-up (SSD1306)
+## 3. Display bring-up (SSD1306) -- DONE (2026-09-06, confirmed on real hardware)
 Wire OLED to a free I2C bus (distinct from the onboard ES8311 codec's bus, if
 that's still active). Get `Adafruit_SSD1306` printing text. Use this as the
 on-device debug surface for every later phase instead of relying solely on
 serial output.
+
+Confirmed via `firmware/notaninstrument-p4` (extended, not a separate
+spike -- this is the "active P4 firmware" bring-up sketch accumulating
+across steps). Wired a GeeekPi 128x64 SSD1306 module to GPIO7 (SDA) /
+GPIO8 (SCL) / 5V / GND. An I2C bus scan (`scan_i2c_bus()`, now a permanent
+periodic diagnostic, not a one-off) found two devices sharing that bus:
+`0x18` (almost certainly the onboard ES8311 codec CLAUDE.md already
+flagged as a possible bus-sharing risk on these pins) and `0x3C` (the
+SSD1306) -- no address collision, both coexist fine. `display_text()` and
+`display_note()` (adapted from `firmware/legacy_code/midi_display.cpp`,
+which had several real bugs fixed along the way -- see that firmware's
+README) both confirmed rendering correctly on the physical screen.
+
+One thing worth recording for next time: the display appeared completely
+blank on the very first flash, which looked at first like a wiring/power
+problem -- but the I2C scan proved the display was electrically alive and
+ACKing at 0x3C the whole time, ruling that out. It started working on a
+subsequent flash without a code change identified as the fix, so the
+actual cause of that first blank screen is unresolved (possibly just a
+display needing a moment to settle after power-up, or an incidental wire
+reseat) -- not treated as a real bug since it hasn't recurred, but worth
+a first troubleshooting step (I2C scan, not wiring) if it ever does.
+
+**Since integrated into step 2's real hardware**: `firmware/spike-usb-midi-idf`
+now drives this same OLED directly from live `tuh_midi_rx_cb` events (via
+the ESP-IDF-native `k0i05/esp_ssd1306` component, not the Arduino
+`Adafruit_SSD1306` used for this step's own standalone proof) -- channel,
+note name (scientific pitch notation) or CC number, and a velocity/value
+bar, confirmed updating in real time as a real controller was played. Two
+real problems surfaced and got fixed once a fast-streaming control (a pot/
+joystick) was scrubbed continuously: clearing the whole screen before
+every redraw caused visible flicker, and redrawing on every single MIDI
+message (which can arrive far faster than the I2C bus + this library's
+page-oriented text API can render) caused visible lag. Fixed by rate-limiting
+actual screen writes to 20Hz and overwriting fixed-width fields in place
+instead of clearing first -- see `firmware/spike-usb-midi-idf/README.md`.
 
 ## 4. Audio output path (PCM5102 over I2S)
 Get one hard-coded test tone or short WAV playing cleanly through the DAC
