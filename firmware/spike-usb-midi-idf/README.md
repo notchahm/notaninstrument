@@ -23,6 +23,28 @@ MIDI packet: 09 90 37 19   <- Note On,  ch 0, note 0x37, velocity 0x19
 MIDI packet: 08 80 37 00   <- Note Off, ch 0, note 0x37
 ```
 
+**Confirmed generalizing to a second, unrelated controller** (2026-09-06,
+same session, zero code changes): a **Korg padKONTROL** (identified via its
+own USB string descriptors -- "KORG INC." / "padKONTROL"), a different
+vendor and a structurally different device (a multi-pad drum controller
+reporting 3 rx / 2 tx virtual MIDI cables, vs. the AKAI's single cable).
+Enumerated cleanly and streamed correctly-decoded real-time MIDI data as
+pads were pressed:
+
+```
+usb_midi_spike: MIDI interface mounted: idx=0 addr=1 itf=0 rx_cables=3 tx_cables=2
+MIDI packet: 19 99 3b 6b   <- Note On,  ch 9, note 0x3b, velocity 0x6b
+MIDI packet: 18 89 3b 40   <- Note Off, ch 9, note 0x3b
+```
+
+(Interspersed with a lot of `00 00 00 00` padding packets -- normal: this
+device packs multiple 4-byte USB-MIDI event slots per USB transfer and
+zero-pads unused slots rather than omitting them. TinyUSB parsed all of it
+correctly regardless.) This rules out "it only works because of something
+specific to the AKAI controller's descriptor layout" as an explanation --
+two different vendors, two different device topologies, same firmware, no
+changes.
+
 Three real bugs were found and fixed on the way here, and one wrong
 conclusion was reached and later corrected -- worth reading in full since
 it changes how you should interpret "it doesn't work" results on this

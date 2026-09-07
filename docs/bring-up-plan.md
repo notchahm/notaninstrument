@@ -65,7 +65,10 @@ full detail in CLAUDE.md architecture decision #4:
    correct port worked immediately and completely**: full enumeration,
    both `tuh_mount_cb`/`tuh_midi_mount_cb` firing, and real-time MIDI
    performance data streaming correctly through `tuh_midi_rx_cb` as pads
-   were pressed on the real controller.
+   were pressed on the real controller. Confirmed generalizing to a
+   second, unrelated controller too (a Korg padKONTROL, different vendor
+   and device topology) with zero code changes -- see
+   `firmware/spike-usb-midi-idf/README.md`.
 
 **Net result: both option 2 (TinyUSB) and option 3 (native USB Host
 Library) work on real hardware, on the correct port.** Option 2 is the

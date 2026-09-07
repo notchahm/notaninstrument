@@ -165,6 +165,11 @@ earlier RP2350 (Raspberry Pi Pico 2) prototype. It has:
    streamed correctly through `tuh_midi_rx_cb` (`09 90 37 19` = Note On
    ch0 note 0x37 vel 0x19, etc.) as pads were pressed on the real
    controller. TinyUSB was never broken -- the test setup was.
+   **Confirmed generalizing to a second, unrelated controller** (same
+   session, zero code changes): a Korg padKONTROL (different vendor,
+   multi-cable device vs. the AKAI's single cable) also enumerated and
+   streamed correctly-decoded MIDI data -- see
+   `firmware/spike-usb-midi-idf/README.md` for the log.
    **Net result: both `firmware/spike-usb-midi-idf/` (TinyUSB) and
    `firmware/spike-usb-host-native/` (native USB Host Library) work on
    real hardware, on the correct port.** TinyUSB is the more complete

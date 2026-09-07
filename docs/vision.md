@@ -172,7 +172,10 @@ real hardware, 2026-09-06.**
   changes) onto the correct port worked immediately and completely**:
   full enumeration, and real-time MIDI performance data streaming
   correctly through `tuh_midi_rx_cb` as pads were pressed on the real
-  controller. TinyUSB was never broken — the test setup was.
+  controller. TinyUSB was never broken — the test setup was. Confirmed
+  generalizing to a second, unrelated controller (a Korg padKONTROL) with
+  zero code changes, ruling out anything specific to the AKAI's own
+  descriptor layout as the explanation.
 - **Net result: both paths work on real hardware, on the correct port.**
   TinyUSB (`firmware/spike-usb-midi-idf/`) is the recommended path going
   forward — its `midi_host.c` gives ready-made USB-MIDI event-packet
