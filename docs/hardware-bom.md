@@ -27,7 +27,7 @@ isn't lost:
   somewhere else. The P4 dev kit's two USB-A host ports (via the onboard
   CH334F hub, jumper-set to host mode) don't need this workaround.
 
-## USB-A port behavior (confirmed 2026-09-06, real hardware)
+## USB-A port behavior (confirmed 2026-09-06, real hardware + schematic)
 
 The board actually has **4** USB-A ports, not the 2 the main table's
 description implies — confirmed by direct inspection, not just the "2x
@@ -42,13 +42,50 @@ and an AKAI MPK Mini Play mk3, confirmed independently via both
 this port finding explained the real cause; see that spike's README for
 the full story).
 
-Working theory, not confirmed against the schematic: the jumper-adjacent
-port is the board's one genuine dual-role OTG connector, which likely
-needs a board-specific VBUS-enable GPIO that generic host-mode code has no
-way to know about, while the other ports are simpler always-on fixed host
-ports. **Use a non-jumper-adjacent port** for MIDI controller input until
-that GPIO (if it exists) is identified. See
-`firmware/spike-usb-host-native/README.md` for the full finding.
+**Root cause, now confirmed against Waveshare's own schematic** (vendor
+PDF, `docs/datasheets/ESP32-P4-WIFI6-DEV-KIT-schematic.pdf` — fetched from
+`files.waveshare.com`, rendered and read directly, not guessed): the
+earlier "VBUS-enable GPIO" theory below was wrong. It's a **data-line
+topology switch, not a power switch**:
+
+- **J2** and **J8** are each a stacked dual USB-A socket ("双层USB母座 90度
+  弯脚") — 2 physical shells apiece, 4 total, matching the empirical count.
+- **U14 (CH334F)** is a genuine 4-downstream-port USB2.0 hub. Three of its
+  four downstream ports go to real connectors: `DP1/DM1`→J2 shell 1,
+  `DP2/DM2`→J2 shell 2, `DP3/DM3`→J8 shell 1. Its **4th downstream port
+  (`DP4/DM4`) only breaks out to unpopulated test points (TP1/TP2)** — not
+  a real connector at all.
+- **U15 (FSUSB42UMX)** is a 2:1 USB high-speed data mux. Its common port
+  (D+/D-) is wired straight to the ESP32-P4's own native USB D+/D-
+  (`USBD_P`/`USBD_N`). Per the schematic's own annotation, `SEL:H-->2;
+  L-->1`: side 1 goes to CH334F's *upstream* port (feeding the whole hub),
+  side 2 goes directly to **J8's 2nd shell**.
+- **H3** is the physical 3-pin jumper header driving that `SEL` line (via a
+  0Ω resistor, R36) — this is the "USB OTG Function Selection" jumper
+  called out in Waveshare's docs, physically near J8, which is exactly why
+  it reads as "jumper-adjacent."
+- **VBUS is a red herring.** `U6 (DIO7003HEST5)` is a simple load switch
+  whose `EN` pin is hard pulled high via a resistor (R25) straight to
+  `VCC_5V` — always on, not gated by the hub, a GPIO, or the jumper at all.
+  Its output (`VBUS_OUT`) feeds **all 4 shells' VBUS pins identically, all
+  the time**. Every shell has 5V present regardless of jumper position.
+
+So with the jumper on **HOST** (as this project has it): the P4's native
+USB feeds CH334F's upstream port, lighting up J2's 2 shells + J8's 1st
+shell as 3 real, simultaneous host ports — that's the documented "expand
+USB ports" behavior. **J8's 2nd shell's data lines simply go nowhere in
+this jumper position** — not unpowered, not broken, just disconnected by
+design, because that shell is wired to the mux's *other* side (the P4's
+single native port, active only in the opposite/device jumper position,
+where the other 3 hub ports would in turn go dark instead). It's mutually
+exclusive by hardware design, not a bug and not something firmware can
+route around.
+
+**Practical takeaway: nothing to fix.** Use the 3 non-jumper-adjacent
+shells (J2 both + J8's outer one) as host ports, which is already what
+this project's spikes have been doing. The 4th shell is the OTG/device
+connector, not a 4th simultaneous host port — nothing in the schematic
+offers a way to have 4 host ports live at once.
 
 ## Pin assignments
 

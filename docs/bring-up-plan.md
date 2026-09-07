@@ -78,11 +78,18 @@ descriptors and would need a hand-written class driver to reach the same
 point.
 
 One still-relevant hardware finding, not a firmware bug: use a
-non-jumper-adjacent USB-A port. Working theory (unconfirmed against the
-schematic): the jumper-adjacent port is the board's one true dual-role OTG
-connector, needing its own board-specific VBUS-enable GPIO that a generic
-example has no way to know about, while the other ports are simpler
-always-on fixed host ports. See `docs/hardware-bom.md`.
+non-jumper-adjacent USB-A port. **Now confirmed against Waveshare's own
+schematic** (`docs/datasheets/ESP32-P4-WIFI6-DEV-KIT-schematic.pdf`,
+2026-09-06): it's not a power/VBUS issue at all (VBUS is switched by an
+always-on load switch feeding all 4 physical USB-A shells identically).
+It's a data-line mux: the jumper-adjacent shell's D+/D- are wired to a 2:1
+mux (`FSUSB42UMX`) that's either routed to the ESP32-P4's own native USB
+(making that one shell a true dual-role OTG port) or disconnected entirely
+(when the jumper instead feeds the P4's native USB into the CH334F hub, the
+project's normal "HOST" configuration, lighting up the other 3 shells as
+real host ports). With the jumper on HOST, that 4th shell's data lines are
+simply not connected to anything — expected, not a defect. See
+`docs/hardware-bom.md` for the full schematic-level breakdown.
 
 **Next**: `firmware/spike-usb-midi-idf` already parses real MIDI events
 via `tuh_midi_rx_cb` -- the next real step is wiring that into actual

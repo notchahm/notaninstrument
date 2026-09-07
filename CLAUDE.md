@@ -32,8 +32,15 @@ reference; `vision.md` is the map connecting it to
   - Onboard ESP32-C6 co-processor (WiFi 6 / BLE) over SDIO — not currently
     used by this project; candidate for power-down if unused, since it adds
     quiescent draw
-  - Native High-Speed USB 2.0 OTG (two USB-A ports via a CH334F hub, both
-    switched together between host/device mode via jumper — set to HOST)
+  - Native High-Speed USB 2.0 OTG. The board actually has 4 physical USB-A
+    shells (two stacked dual-USB-A connectors); a CH334F hub (confirmed via
+    the vendor schematic, `docs/datasheets/ESP32-P4-WIFI6-DEV-KIT-schematic.pdf`)
+    provides 3 of them as simultaneous host ports when the "USB OTG Function
+    Selection" jumper is set to HOST (as this project has it). The 4th shell
+    is wired to a separate 2:1 data mux as the P4's own single native
+    dual-role OTG port — mutually exclusive with the 3-port hub
+    configuration by hardware design, not a bug. See "USB-A port behavior"
+    in `docs/hardware-bom.md` for the full finding.
   - Native SDIO 3.0 microSD slot
   - Onboard ES8311 audio codec — **mono only**, not used; we drive our own
     stereo DAC instead (see below)
