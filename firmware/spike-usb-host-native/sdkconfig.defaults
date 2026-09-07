@@ -1,0 +1,8 @@
+# Minimal defaults for the native-usb_host spike. `idf.py set-target esp32p4`
+# (see Makefile) fills in the rest of sdkconfig on first build.
+CONFIG_IDF_TARGET="esp32p4"
+
+# From Espressif's own usb_host_lib example (examples/peripherals/usb/host/
+# usb_host_lib) -- required since this board's USB-A ports go through a
+# CH334F hub (docs/hardware-bom.md), not a direct connection.
+CONFIG_USB_HOST_HUBS_SUPPORTED=y

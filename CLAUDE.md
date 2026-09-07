@@ -123,18 +123,52 @@ earlier RP2350 (Raspberry Pi Pico 2) prototype. It has:
    published `espressif/tinyusb` *registry component* turned out to be
    device-mode only (its own `CMakeLists.txt` never builds `usbh.c`,
    `hcd_dwc2.c`, or `midi_host.c`, regardless of config) -- so
-   `firmware/spike-usb-midi-idf/` now vendors those files itself in
+   `firmware/spike-usb-midi-idf/` vendored those files itself in
    `components/tinyusb_host/` (same upstream source, `git://github.com/
    espressif/tinyusb.git`, just with a from-scratch `CMakeLists.txt`
-   building the host-mode file set). With that fix, ESP-IDF v6.1 built the
-   spike end-to-end with no undefined references (`spike_usb_midi_idf.elf`,
-   ~216KB). Still needs to be **flashed to real hardware and tested against
-   an actual USB-MIDI controller** -- a clean build proves the code and
-   link graph are sound, not that the DWC2 host controller actually
-   enumerates a device on this board. If that also fails, the remaining
-   fallback is a hand-written class driver on ESP-IDF's native USB Host
-   Library (modeled on `usb_host_cdc_acm`, since MIDI's bulk-endpoint shape
-   is structurally similar to CDC's data endpoints).
+   building the host-mode file set). That built end-to-end with no
+   undefined references, but real-hardware testing (2026-09-06) found two
+   more bugs specific to this fork's ESP32-P4 host-mode support: (1) it
+   defaulted host mode onto `CFG_TUSB_RHPORT0_MODE`, but P4 has two DWC2
+   controllers and Port0 is FS -- this board's native HS USB-A ports are
+   Port1; (2) `dwc2_phy_init()`/`dwc2_phy_update()` for ESP32 are literal
+   no-op stubs (`// maybe usb_utmi_hal_init()`), so even after fixing (1),
+   any register access on the HS controller took a Load access fault --
+   the peripheral was never actually clocked on. Fixed that specific crash
+   by calling ESP-IDF's own `usb_new_phy()` (`esp_hw_support/usb_phy`)
+   before `tusb_init()`, confirmed against that component's own test suite.
+   That got past the crash, but a further real-hardware finding -- the
+   driver's own connect/disconnect interrupt never fired at all afterward,
+   confirmed via `CFG_TUSB_DEBUG=3` internal logging showing healthy
+   register reads (`gsnpsid`, `ghwcfg2-4` all real-looking values) but zero
+   interrupt-level activity on a live connect -- was deep enough to invoke
+   this decision's own pre-planned fallback.
+   **PASS, on ESP-IDF's native USB Host Library, not TinyUSB at all.**
+   `firmware/spike-usb-host-native/` -- Espressif's own `usb_host_lib`
+   example (the `espressif/usb` component), copied in with one fix: the
+   stock example hardcodes `peripheral_map = BIT0`, which -- following the
+   same Port0=FS/Port1=HS numbering that broke the TinyUSB path -- likely
+   selects the FS peripheral; `usb_host_config_t`'s own doc comment says
+   `0` selects "the default peripheral" which is HS on HS-capable targets,
+   so that's what's used instead. **Confirmed enumerating a real AKAI MPK
+   Mini Play mk3** (VID:PID `0x09e8:0x0050`) on real hardware, full
+   descriptor set including the actual MIDI Streaming interface (Audio
+   class 0x01, subclass 0x03, bulk EP2 OUT/EP3 IN, exactly per the
+   USB-MIDI 1.0 spec). One still-open hardware finding, not a firmware
+   bug: of this board's 4 USB-A ports, only the ones *not* adjacent to the
+   documented host/device jumper actually delivered VBUS power to a
+   bus-powered device in testing -- the jumper-adjacent port is likely the
+   board's one true dual-role OTG connector (needing its own
+   board-specific VBUS-enable GPIO this generic example doesn't know
+   about), while the other ports are plausibly simpler always-on fixed
+   host ports. Use a non-jumper-adjacent port until/unless that GPIO is
+   identified from the board schematic.
+   **Next**: `firmware/spike-usb-host-native/`'s class driver only dumps
+   descriptors -- it doesn't parse MIDI messages yet. The next real step is
+   a hand-written MIDI class driver on top of this now-proven native
+   USB Host Library foundation (open the MIDI Streaming interface's bulk
+   endpoints, parse USB-MIDI event packets), modeled on `usb_host_cdc_acm`
+   as originally planned.
 
 ## Bring-up plan (in order — see docs/bring-up-plan.md for full detail)
 
@@ -199,16 +233,28 @@ firmware/
                               herring -- flagged if it ever changes)
   notaninstrument-p4/     -- active P4 firmware (bring-up step 1: blink +
                               serial/PSRAM check, Makefile wraps arduino-cli)
-  spike-usb-midi-idf/     -- bring-up step 2, raw-ESP-IDF side: USB MIDI
-                              host spike test on ESP-IDF + TinyUSB (tuh_*),
-                              no Arduino. Builds clean (ESP-IDF v6.1),
-                              untested on hardware. Vendors its own
-                              host-mode TinyUSB in components/tinyusb_host/
-                              (the published registry component is
-                              device-mode only). Makefile wraps idf.py.
-  spike-usb-midi-arduino/ -- bring-up step 2, Arduino side: same spike test
-                              on Arduino-ESP32 + Adafruit TinyUSB, identical
-                              tuh_midi_* callbacks for a fair comparison.
+  spike-usb-host-native/  -- bring-up step 2, WINNING PATH: PASSED on real
+                              hardware, ESP-IDF's native USB Host Library
+                              (espressif/usb component), not TinyUSB.
+                              Confirmed enumerating a real AKAI MPK Mini
+                              Play mk3 with its actual MIDI Streaming
+                              interface. Descriptor-dump only so far, no
+                              MIDI parsing yet. Makefile wraps idf.py.
+  spike-usb-midi-idf/     -- bring-up step 2, abandoned path: raw-ESP-IDF +
+                              TinyUSB (tuh_*), no Arduino. Builds clean, but
+                              real-hardware testing found the driver's own
+                              connect/disconnect interrupt never fires
+                              (after fixing two other real bugs along the
+                              way -- see architecture decision #4). Kept as
+                              a documented dead end, not deleted. Vendors
+                              its own host-mode TinyUSB in
+                              components/tinyusb_host/ (the published
+                              registry component is device-mode only).
+                              Makefile wraps idf.py.
+  spike-usb-midi-arduino/ -- bring-up step 2, abandoned path: Arduino-ESP32
+                              + Adafruit TinyUSB, confirmed dead end before
+                              even reaching hardware (forces an external
+                              MAX3421E host chip not in this project's BOM).
                               Makefile wraps arduino-cli.
   reference-rp2350/       -- prior working RP2350 sketch, reference only
 tools/

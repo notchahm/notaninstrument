@@ -137,40 +137,54 @@ a replacement for any of them.
 
 ## Where things actually stand (2026-09-06)
 
-Currently on **bring-up step 2 of 8**
-(`docs/bring-up-plan.md`) — USB-MIDI host viability on ESP32-P4, the single
-biggest technical risk this project identified up front
-(`CLAUDE.md` architecture decision #4).
+**Bring-up step 2 of 8** (`docs/bring-up-plan.md`) — USB-MIDI host
+viability on ESP32-P4, the single biggest technical risk this project
+identified up front (`CLAUDE.md` architecture decision #4) — **passed, on
+real hardware, 2026-09-06.**
 
-- **Arduino-ESP32 + Adafruit TinyUSB is a confirmed dead end** for this
-  board's native USB-A host ports — not a guess or a failed attempt, but
-  read directly out of the installed toolchain's source and verified by
-  testing a patch: Adafruit's ESP32 host config hardcodes an external
-  MAX3421E SPI chip (not in this project's BOM) as the only host
-  controller, and the underlying prebuilt static library fixes the native
-  OTG port to device-only. See `firmware/spike-usb-midi-arduino/README.md`.
-- **Raw ESP-IDF + a vendored host-mode TinyUSB component builds cleanly**,
-  end to end, with the real host controller driver and MIDI host class
-  actually compiled in this time (`firmware/spike-usb-midi-idf/`) — but
-  it's untested on real hardware. A clean build proves the code and link
-  graph are sound, not that a MIDI controller will actually enumerate.
-- **The platform bet was explicitly re-examined and re-confirmed**: given
-  RP2350 already has working MIDI-in and P4 doesn't yet, staying on P4 was
-  a deliberate choice for the soundbank/polyphony ceiling described above,
-  not inertia.
-- **`make test`** (`firmware/test-builds.sh`) now catches build regressions
-  across all three firmware targets automatically, including flagging if
-  the Arduino dead-end ever stops failing for its documented reason (i.e.
-  upstream fixed it).
+- **Arduino-ESP32 + Adafruit TinyUSB was a confirmed dead end**, found
+  before even touching hardware — Adafruit's ESP32 host config hardcodes
+  an external MAX3421E SPI chip not in this project's BOM. See
+  `firmware/spike-usb-midi-arduino/README.md`.
+- **Raw ESP-IDF + vendored TinyUSB built clean but failed on real
+  hardware** in a way a clean build couldn't have caught: after fixing two
+  real bugs (wrong root hub port for P4's dual DWC2 controllers; a stubbed
+  PHY/clock-init function causing a register-access crash, fixed via
+  ESP-IDF's own `usb_new_phy()`), the driver's own connect/disconnect
+  interrupt simply never fired, even with every register read confirmed
+  healthy. Abandoned at that point — see `firmware/spike-usb-midi-idf/README.md`.
+- **ESP-IDF's native USB Host Library passed** — not TinyUSB at all.
+  `firmware/spike-usb-host-native/`, Espressif's own `usb_host_lib`
+  example with one fix (the stock example's hardcoded peripheral selection
+  likely picks the wrong — FS, not HS — controller on this board).
+  **Confirmed enumerating a real AKAI MPK Mini Play mk3** on real
+  hardware, full descriptor set including its actual MIDI Streaming
+  interface (bulk endpoints, exactly per the USB-MIDI 1.0 spec) — the same
+  device that started this whole project.
+- **One open hardware finding, not a firmware bug**: of this board's 4
+  USB-A ports, only the ones *not* adjacent to the documented host/device
+  jumper delivered power to a bus-powered test device. Working theory: the
+  jumper-adjacent port is the one true dual-role OTG connector, needing a
+  board-specific VBUS-enable GPIO no generic example would know about; the
+  other ports are simpler always-on fixed host ports. Use a
+  non-jumper-adjacent port for now.
+- **The platform bet was explicitly re-examined and re-confirmed** earlier
+  in this process: given RP2350 already had working MIDI-in and P4 didn't
+  yet, staying on P4 was a deliberate choice for the soundbank/polyphony
+  ceiling described above, not inertia — and it's now paid off.
+- **`make test`** (`firmware/test-builds.sh`) catches build regressions
+  across firmware targets automatically, including flagging if the
+  Arduino dead-end ever stops failing for its documented reason.
 
 ## What's next
 
-1. Get real ESP32-P4 hardware and a USB-MIDI controller in hand, flash
-   `firmware/spike-usb-midi-idf`, and confirm `tuh_midi_mount_cb` /
-   `tuh_midi_rx_cb` actually fire on connect.
-2. **If it passes:** continue the bring-up plan in order — display, audio
-   output, soundbank pipeline, single-voice integration, then polyphony.
-3. **If it fails:** fall back to a hand-written MIDI class driver on
-   ESP-IDF's native USB Host Library (`CLAUDE.md` decision #4's documented
-   second fallback) — a bigger undertaking, but not a dead end for the
-   project, just a longer bring-up step 2.
+1. `firmware/spike-usb-host-native/` only dumps USB descriptors — it
+   doesn't parse MIDI messages yet. Write the actual MIDI class driver on
+   top of this now-proven foundation: open the MIDI Streaming interface's
+   bulk endpoints, parse USB-MIDI event packets.
+2. Continue the bring-up plan in order from there — display, audio output,
+   soundbank pipeline, single-voice integration, then polyphony.
+3. Optionally, track down the jumper-adjacent OTG port's power-enable GPIO
+   from the board schematic, if dual-role (host/device-switchable)
+   behavior on that specific connector ever matters — not currently
+   blocking anything.

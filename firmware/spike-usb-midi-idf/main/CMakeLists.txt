@@ -1,1 +1,1 @@
-idf_component_register(SRCS "main.c" INCLUDE_DIRS "." PRIV_REQUIRES tinyusb_host)
+idf_component_register(SRCS "main.c" INCLUDE_DIRS "." PRIV_REQUIRES tinyusb_host esp_hw_support)

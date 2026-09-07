@@ -12,13 +12,41 @@ question: does `tuh_midi_mount_cb` / `tuh_midi_rx_cb` fire when a
 class-compliant USB-MIDI controller is plugged into the board's USB-A host
 port?
 
-## Status: builds cleanly (2026-09-06, ESP-IDF v6.1, esp32p4), untested on hardware
+## Status: ABANDONED (2026-09-06) -- see ../spike-usb-host-native/ instead
 
-Verified end-to-end build success -- `spike_usb_midi_idf.elf` links with no
-undefined references, binary generated (~216KB, 79% of the app partition
-free). Not yet flashed to real hardware or tested against an actual
-USB-MIDI controller -- that's the remaining step, see "What counts as
-pass/fail" below.
+This path built cleanly and is kept as a documented dead end, not deleted.
+Real-hardware testing found three real bugs in sequence, the last of which
+was deep enough to invoke CLAUDE.md architecture decision #4's own
+pre-planned fallback:
+
+1. **Wrong root hub port.** `main/tusb_config.h` set
+   `CFG_TUSB_RHPORT0_MODE`, but ESP32-P4 has two DWC2 controllers --
+   `components/tinyusb_host/src/portable/synopsys/dwc2/dwc2_esp32.h`'s own
+   comment: "Port0 to OTG_FS, and Port1 to OTG_HS". This board's native HS
+   USB-A ports are Port1. Fixed by switching to `CFG_TUSB_RHPORT1_MODE`.
+2. **Stubbed PHY/clock init.** With RHPORT1 selected, the board immediately
+   hit a `Load access fault` at exactly `DWC2_HS_REG_BASE + 0x48` -- a real
+   crash, not a config mismatch. `dwc2_phy_init()`/`dwc2_phy_update()` for
+   ESP32 in this vendored fork are literal no-op stubs (`// maybe
+   usb_utmi_hal_init()`), so the HS controller's peripheral clock was never
+   actually enabled. Fixed by calling ESP-IDF's own `usb_new_phy()`
+   (`esp_hw_support/usb_phy`) before `tusb_init()`, with the exact config
+   verified against that component's own test suite
+   (`test_apps/usb_phy`, "Init internal UTMI PHY" case), not guessed.
+3. **Connect interrupt never fires.** With both of the above fixed, the
+   board no longer crashed, and `CFG_TUSB_DEBUG=3` showed completely
+   healthy register-level init -- real, non-zero `gsnpsid`/`ghwcfg2-4`
+   reads, "Highspeed UTMI+ PHY init", `hcd_init()`'s own `HPRT_POWER`
+   (VBUS-on) and interrupt-unmask writes all present in the source. But no
+   USB-MIDI controller, and no unrelated test device (a USB mouse) ever
+   produced a single interrupt-level log line, under any condition tried:
+   already connected at boot, live unplug/replug, multiple physical ports.
+   Not fixed -- this is where the pivot to ESP-IDF's native USB Host
+   Library happened instead, and that path immediately succeeded (see
+   `../spike-usb-host-native/README.md`).
+
+Kept in the repo for the documented bugs above, in case a future TinyUSB
+fork version fixes the interrupt issue and this path is worth revisiting.
 
 ## Prerequisites
 

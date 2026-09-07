@@ -27,6 +27,25 @@ isn't lost:
   somewhere else. The P4 dev kit's two USB-A host ports (via the onboard
   CH334F hub, jumper-set to host mode) don't need this workaround.
 
+## USB-A port behavior (confirmed 2026-09-06, real hardware)
+
+The board actually has **4** USB-A ports, not the 2 the main table's
+description implies — confirmed by direct inspection, not just the "2x
+via CH334F hub" documentation. Empirically, only the ports **not adjacent
+to the documented host/device jumper** delivered VBUS power to a
+bus-powered test device (a USB mouse showed no sign of life on the
+jumper-adjacent port, but powered up immediately on a different one; the
+same non-jumper-adjacent port then successfully enumerated both the mouse
+and an AKAI MPK Mini Play mk3 via `firmware/spike-usb-host-native/`).
+
+Working theory, not confirmed against the schematic: the jumper-adjacent
+port is the board's one genuine dual-role OTG connector, which likely
+needs a board-specific VBUS-enable GPIO that generic host-mode code has no
+way to know about, while the other ports are simpler always-on fixed host
+ports. **Use a non-jumper-adjacent port** for MIDI controller input until
+that GPIO (if it exists) is identified. See
+`firmware/spike-usb-host-native/README.md` for the full finding.
+
 ## Pin assignments
 
 TBD — fill in once the board is in hand and its pinout documentation/silkscreen

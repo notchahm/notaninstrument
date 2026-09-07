@@ -117,6 +117,7 @@ run_idf_target() {
 run_arduino_target "notaninstrument-p4" "$FIRMWARE_DIR/notaninstrument-p4" pass ""
 run_arduino_target "spike-usb-midi-arduino" "$FIRMWARE_DIR/spike-usb-midi-arduino" known-fail "tuh_midi_mount_cb_t"
 run_idf_target "spike-usb-midi-idf" "$FIRMWARE_DIR/spike-usb-midi-idf"
+run_idf_target "spike-usb-host-native" "$FIRMWARE_DIR/spike-usb-host-native"
 
 echo
 echo "=== Build verification results ==="
