@@ -33,14 +33,17 @@ reference; `vision.md` is the map connecting it to
     used by this project; candidate for power-down if unused, since it adds
     quiescent draw
   - Native High-Speed USB 2.0 OTG. The board actually has 4 physical USB-A
-    shells (two stacked dual-USB-A connectors); a CH334F hub (confirmed via
-    the vendor schematic, `docs/datasheets/ESP32-P4-WIFI6-DEV-KIT-schematic.pdf`)
-    provides 3 of them as simultaneous host ports when the "USB OTG Function
-    Selection" jumper is set to HOST (as this project has it). The 4th shell
-    is wired to a separate 2:1 data mux as the P4's own single native
-    dual-role OTG port — mutually exclusive with the 3-port hub
-    configuration by hardware design, not a bug. See "USB-A port behavior"
-    in `docs/hardware-bom.md` for the full finding.
+    shells (two stacked dual-USB-A connectors), confirmed via the vendor
+    schematic (`docs/datasheets/ESP32-P4-WIFI6-DEV-KIT-schematic.pdf`) to be
+    wired as a CH334F hub (3 downstream shells) plus a 2:1 data mux
+    selecting whether the P4's native USB feeds that hub or a 4th shell
+    directly as a lone OTG port — mutually exclusive by hardware design.
+    **Currently only that one mux-selected shell actually works**; the
+    other 3 (hub-fed) deliver VBUS power but never enumerate anything,
+    consistent with the hub's upstream never being connected in the mux's
+    current (default/floating) state. Moving the physical jumper is the
+    next untried step to reach 3 simultaneous host ports instead of 1. See
+    "USB-A port behavior" in `docs/hardware-bom.md` for the full finding.
   - Native SDIO 3.0 microSD slot
   - Onboard ES8311 audio codec — **mono only**, not used; we drive our own
     stereo DAC instead (see below)

@@ -70,22 +70,52 @@ topology switch, not a power switch**:
   Its output (`VBUS_OUT`) feeds **all 4 shells' VBUS pins identically, all
   the time**. Every shell has 5V present regardless of jumper position.
 
-So with the jumper on **HOST** (as this project has it): the P4's native
-USB feeds CH334F's upstream port, lighting up J2's 2 shells + J8's 1st
-shell as 3 real, simultaneous host ports — that's the documented "expand
-USB ports" behavior. **J8's 2nd shell's data lines simply go nowhere in
-this jumper position** — not unpowered, not broken, just disconnected by
-design, because that shell is wired to the mux's *other* side (the P4's
-single native port, active only in the opposite/device jumper position,
-where the other 3 hub ports would in turn go dark instead). It's mutually
-exclusive by hardware design, not a bug and not something firmware can
-route around.
+**UPDATE 2026-09-06, corrected — the "3 ports work simultaneously"
+conclusion below was an inference from the schematic, stated too
+confidently before it was actually tested.** Empirically, across every
+test done so far (mouse, AKAI MPK Mini Play mk3, Korg padKONTROL, both the
+TinyUSB and native-usb_host firmware paths), **only one single physical
+shell has ever been demonstrated working — never more than one at a
+time, and never a different one.** That contradicts the "3 simultaneous
+hub ports" prediction below, so treat this section's routing logic as
+correct (it's read directly off the real schematic) but the assumption
+that this board's jumper is currently forcing `SEL` LOW (hub path) as
+**not confirmed, and probably wrong**.
 
-**Practical takeaway: nothing to fix.** Use the 3 non-jumper-adjacent
-shells (J2 both + J8's outer one) as host ports, which is already what
-this project's spikes have been doing. The 4th shell is the OTG/device
-connector, not a 4th simultaneous host port — nothing in the schematic
-offers a way to have 4 host ports live at once.
+Looking closer at H3 itself explains why: pins 2 and 3 are tied to the
+same net on the PCB (no jumper needed between them — bridging 2-3 is a
+no-op), and only pin 1 is on a separate leg, through R36 (0Ω) to GND.
+`USB_SEL` also has a 47KΩ pull-up (R37) to `VBUS_OUT`. So the *only*
+jumper position that does anything is bridging **1-2**, which forces
+`SEL` LOW → routes to the hub. Leaving the cap off 1-2 (including sitting
+on the redundant 2-3 pair, or no cap at all) leaves `SEL` floating HIGH
+via that pull-up → routes straight to the single native port instead.
+**A default-high `SEL` (single port only) matches the observed behavior
+exactly** — so the working hypothesis is now that this board's jumper
+cap is not actually bridging 1-2, regardless of what its "HOST" silkscreen
+label suggested.
+
+**Confirmed 2026-09-06**: the other 3 shells deliver VBUS power to a
+bus-powered device (the AKAI MPK Mini Play showed signs of power there)
+but never enumerate anything — not the AKAI, not a plain USB mouse. That
+is exactly what "hub has power but its upstream link to the P4 was never
+connected" looks like: `VBUS_OUT` is switched independently and stays on
+regardless of `SEL`, but with `SEL` floating HIGH (its default, per above)
+the CH334F hub's upstream (`DPU`/`DMU`) is never fed by the P4's native
+USB at all, so none of its 3 downstream ports can ever complete
+enumeration — power without data, on all 3, indefinitely. Only the one
+shell wired directly to the mux's HSD2 side (bypassing the hub entirely)
+works, because that's the only path `SEL`'s default state actually
+connects.
+
+**Concrete next test**: physically add or move a jumper cap across H3
+pins **1-2** (the only position that forces `SEL` LOW) and retest. Expect
+the currently-working single shell to go dead, and the other 3 (now fed
+through the hub) to start enumerating instead — that would confirm the
+theory end-to-end and unlock 3 simultaneous host ports. If nothing
+changes, or the same one shell keeps working regardless, H3 isn't the
+physical jumper actually being switched (or the CH334F hub has a separate
+problem) and this needs re-opening from the schematic again.
 
 ## Pin assignments
 

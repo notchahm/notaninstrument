@@ -77,19 +77,27 @@ USB-MIDI event-packet parsing for free, where option 3 only dumps raw
 descriptors and would need a hand-written class driver to reach the same
 point.
 
-One still-relevant hardware finding, not a firmware bug: use a
-non-jumper-adjacent USB-A port. **Now confirmed against Waveshare's own
-schematic** (`docs/datasheets/ESP32-P4-WIFI6-DEV-KIT-schematic.pdf`,
-2026-09-06): it's not a power/VBUS issue at all (VBUS is switched by an
-always-on load switch feeding all 4 physical USB-A shells identically).
-It's a data-line mux: the jumper-adjacent shell's D+/D- are wired to a 2:1
-mux (`FSUSB42UMX`) that's either routed to the ESP32-P4's own native USB
-(making that one shell a true dual-role OTG port) or disconnected entirely
-(when the jumper instead feeds the P4's native USB into the CH334F hub, the
-project's normal "HOST" configuration, lighting up the other 3 shells as
-real host ports). With the jumper on HOST, that 4th shell's data lines are
-simply not connected to anything — expected, not a defect. See
-`docs/hardware-bom.md` for the full schematic-level breakdown.
+One still-relevant hardware finding, not a firmware bug: **only one of the
+board's 4 USB-A shells has ever actually worked** (confirmed 2026-09-06
+across the AKAI MPK Mini Play, a Korg padKONTROL, and a plain USB mouse).
+The other 3 deliver VBUS power (a device shows signs of life) but never
+enumerate — no MIDI, not even a mouse. Cross-referencing Waveshare's own
+schematic (`docs/datasheets/ESP32-P4-WIFI6-DEV-KIT-schematic.pdf`)
+explains why: VBUS is switched by one always-on load switch feeding all 4
+shells identically (not the cause), but the shells' D+/D- lines split into
+two mutually-exclusive paths through a 2:1 mux (`FSUSB42UMX`) driven by
+the board's "USB OTG Function Selection" jumper (H3) — one path is a
+single shell wired directly to the P4's own native USB (a lone OTG port),
+the other feeds a CH334F hub's upstream, which would light up the other 3
+shells as real host ports. The working shell matches the mux's *default*
+state (an unpopulated/off-position jumper floats the select line into the
+single-port path via a pull-up); the other 3 sit on a hub whose upstream
+was therefore never connected, so they power up but never enumerate
+anything. **Untried next step**: physically move the jumper cap to bridge
+H3 pins 1-2 (the only position that forces the mux the other way) and
+retest — expect the single working shell to go dead and the other 3 to
+come alive instead. See `docs/hardware-bom.md` for the full schematic
+breakdown and exact pin references.
 
 **Next**: `firmware/spike-usb-midi-idf` already parses real MIDI events
 via `tuh_midi_rx_cb` -- the next real step is wiring that into actual

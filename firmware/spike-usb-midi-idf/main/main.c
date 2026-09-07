@@ -196,8 +196,8 @@ void tuh_midi_rx_cb(uint8_t idx, uint32_t xferred_bytes) {
     (void) xferred_bytes;
     uint8_t packet[4];
     while (tuh_midi_packet_read(idx, packet)) {
-        ESP_LOGI(TAG, "MIDI packet: %02x %02x %02x %02x",
-                 packet[0], packet[1], packet[2], packet[3]);
+        ESP_LOGI(TAG, "MIDI packet [idx=%u]: %02x %02x %02x %02x",
+                 idx, packet[0], packet[1], packet[2], packet[3]);
 
         // USB-MIDI Event Packet: packet[0] low nibble = Code Index Number,
         // packet[1] = MIDI status byte, packet[2]/[3] = data bytes.
