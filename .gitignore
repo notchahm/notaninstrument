@@ -18,5 +18,20 @@ firmware/*/dependencies.lock
 *.swp
 *.swo
 
+# Raw sample library (~500MB+ downloaded from archive.org) and generated
+# .nib output -- both regenerable from tools/sfz_preprocessor/sfz_to_nib.py,
+# not meant to live in git. .nib soundbanks belong on the SD card or in a
+# flash partition at deploy time (docs/multi-instrument-soundbanks.md), not
+# in the repo.
+tools/sfz_preprocessor/testdata/
+tools/sfz_preprocessor/venv/
+*.nib
+
+# Vendored adpcm-xq (tools/sfz_preprocessor/adpcm-xq/) is source-only in
+# git -- sfz_to_nib.py compiles the encoder binary itself on first use
+# (ensure_adpcm_xq_built()), so the binary shouldn't be committed.
+tools/sfz_preprocessor/adpcm-xq/adpcm-xq
+tools/sfz_preprocessor/__pycache__/
+
 # Claude Code session-local runtime state, not project config
 .claude/scheduled_tasks.lock

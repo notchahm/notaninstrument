@@ -1,0 +1,8 @@
+# Custom partition table (docs/multi-instrument-soundbanks.md: "Built-in
+# ROM default" -- a soundbank stored in flash, not embedded in the app
+# binary, so it survives independent re-flashing of firmware vs. content).
+# Name,      Type, SubType, Offset,   Size,      Flags
+nvs,         data, nvs,     0x9000,   0x6000,
+phy_init,    data, phy,     0xF000,   0x1000,
+factory,     app,  factory, 0x10000,  0x180000,
+soundbank,   data, 0x40,    0x190000, 0xE00000,

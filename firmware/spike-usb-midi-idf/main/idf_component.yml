@@ -2,5 +2,15 @@
 # (uses the modern driver/i2c_master.h API). Espressif's own
 # `espressif/ssd1306` registry component is deprecated -- this is not a
 # fallback choice, it's the recommended one.
+#
+# espressif/usb: ESP-IDF's first-party native USB Host Library. Replaces
+# this project's TinyUSB dependency (components/tinyusb_host/, kept
+# vendored in-tree as a reference/fallback but no longer built by this
+# app) as of docs/polyphony-latency-investigation.md's finding that
+# TinyUSB's own DWC2 driver stack, not the MIDI device or this project's
+# code, was the source of the ~242ms chord-onset lag -- confirmed by the
+# same real hardware/controller showing 0-11ms chord onset on this
+# library instead.
 dependencies:
   k0i05/esp_ssd1306: "*"
+  espressif/usb: "^1.0.0"

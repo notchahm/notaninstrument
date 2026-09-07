@@ -1,24 +1,33 @@
-// Bring-up steps 2 + 3 (docs/bring-up-plan.md): USB MIDI host, built
-// directly on ESP-IDF + TinyUSB's host stack (tuh_* API) -- no Arduino
-// involved (CLAUDE.md architecture decision #4) -- now also driving an
-// SSD1306 OLED (via the k0i05/esp_ssd1306 component) to show incoming
-// Note On/Off events in real time, integrating the two bring-up steps
-// that were previously only proven separately (spike-usb-midi-idf's own
-// tuh_midi_rx_cb logging, and firmware/notaninstrument-p4's Arduino-based
-// display test). Still a standalone diagnostic, not the real project.
+// Bring-up steps 2 + 3 + 4 + 5 (docs/bring-up-plan.md): USB MIDI host,
+// driving an SSD1306 OLED (via the k0i05/esp_ssd1306 component) to show
+// incoming Note On/Off events in real time, AND real polyphonic sample
+// playback through a PCM5102A (voice_engine.c + nib_loader.c, reading the
+// Salamander piano .nib built by tools/sfz_preprocessor/sfz_to_nib.py out
+// of a dedicated flash partition -- partitions.csv) -- all of MIDI input,
+// display, and actual sampled-instrument audio running as one firmware
+// image.
+//
+// USB MIDI host is ESP-IDF's native USB Host Library (usb_midi_host.c),
+// not TinyUSB (components/tinyusb_host/, kept vendored in-tree as
+// reference/fallback but no longer built by this app) -- see
+// docs/polyphony-latency-investigation.md: the ~242ms chord-onset lag
+// this project fought for a long time turned out to be TinyUSB's own
+// DWC2 driver stack, not this project's code or the MIDI device, and
+// switching to this native path measured 0-11ms chord onset on the same
+// real hardware/controller instead.
 
 #include <stdio.h>
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
+#include "audio_output.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
-#include "esp_private/usb_phy.h"
 #include "esp_timer.h"
 #include "ssd1306.h"
-#include "tusb.h"
-
-static const char *TAG = "usb_midi_spike";
+#include "usb_midi_host.h"
+#include "voice_engine.h"
 
 // SSD1306 OLED, confirmed working wiring from docs/hardware-bom.md
 // (firmware/notaninstrument-p4's bring-up step 3): SDA=GPIO7, SCL=GPIO8.
@@ -75,10 +84,18 @@ static void midi_note_name(uint8_t note, char *buf, size_t buf_size) {
 #define DISPLAY_MIN_UPDATE_INTERVAL_US (50 * 1000) // 50ms = 20Hz
 static int64_t s_last_display_update_us = 0;
 
+// Reverted to the original single-note display design (confirmed working
+// on real hardware in earlier bring-up) after the multi-note redesign
+// above showed a real bug on real hardware -- notes only appeared after
+// release instead of on press -- and several rounds of layout iteration
+// didn't land well. Not worth debugging further right now: this design
+// is simple and proven; a multi-note display is worth revisiting later
+// as its own separately-tested change, not stacked on top of the
+// polyphony/timing work already in flight.
+//
 // Shared layout for both note and CC events (128x64 = 8 pages of 8px each;
-// _x2 text spans 2 pages, _x3 spans 3 -- confirmed by reading ssd1306.c,
-// not guessed. _x2 lines fit at most 8 chars, _x3 lines fit at most 5, per
-// SSD1306_TEXT_X{2,3}_DISPLAY_MAX_LEN):
+// _x2 text spans 2 pages, _x3 spans 3. _x2 lines fit at most 8 chars,
+// _x3 lines fit at most 5, per SSD1306_TEXT_X{2,3}_DISPLAY_MAX_LEN):
 //   pages 0-1 (_x2): "Ch N"            -- always channel, for consistency
 //   pages 2-4 (_x3): the event's "identity" -- note name, or "CCnn"
 //   pages 5-6 (_x2): the event's "intensity" -- "Vel N" or "Val N"
@@ -105,8 +122,6 @@ static void update_display(uint8_t channel, const char *identity, const char *in
     // channel is the raw 0-15 value from the status byte's low nibble --
     // correct for the wire protocol, but MIDI channels are conventionally
     // shown to humans as 1-16 (every DAW/hardware display does this).
-    // Only the display formatting adds 1; channel stays 0-based everywhere
-    // else (e.g. if this is later wired into start_note/stop_note calls).
     snprintf(channel_line, sizeof(channel_line), "Ch %-5u", channel + 1);
     ssd1306_display_text_x2(s_display, 0, channel_line, false);
 
@@ -148,97 +163,82 @@ static void update_display_for_cc(uint8_t channel, uint8_t controller, uint8_t v
     update_display(channel, identity, "Val", value, true);
 }
 
-// TinyUSB's generic DWC2 port (components/tinyusb_host/src/portable/
-// synopsys/dwc2/dwc2_esp32.h) has dwc2_phy_init()/dwc2_phy_update() as
-// literal no-op stubs on ESP32 targets ("// maybe usb_utmi_hal_init()").
-// Confirmed on real hardware 2026-09-06: without this, tusb_init()
-// "succeeds" but any access to the HS controller's registers
-// (DWC2_HS_REG_BASE, 0x50000000 on P4) takes a Load access fault --
-// the peripheral is never actually clocked/powered on. usb_new_phy() is
-// ESP-IDF's own (esp_hw_support/usb_phy) API for that -- "This function
-// will enable the OTG Controller" per its own doc comment. Config verified
-// against esp_hw_support's own test suite (test_apps/usb_phy, "Init
-// internal UTMI PHY" case), not guessed.
-static usb_phy_handle_t s_usb_phy_handle;
+// Display updates are dispatched through this queue instead of being
+// called directly from usb_midi_on_event -- see the note there for why:
+// even with the audio-critical-call-first ordering, update_display_for_
+// note/cc's I2C write still runs *inside* usb_midi_host.c's bulk-transfer
+// completion callback, which delays that callback's own resubmission of
+// the next IN transfer for as long as the write takes. Confirmed on real
+// hardware (2026-09-07) that this drops notes: a genuinely simultaneous
+// chord (3 keys struck together) produced only one Note On reaching this
+// file at all, with the others' corresponding Note Offs arriving with no
+// matching Note On ever seen -- consistent with the controller's own
+// shallow internal MIDI buffer overwriting unsent events while the host
+// was blocked in an I2C write instead of re-arming the endpoint. A chord
+// played with any perceptible stagger between notes worked fine, which
+// fits: enough time between notes for the previous one's (rate-limited,
+// so not even every note triggers a real write) I2C write to finish
+// before the next one needed the endpoint free again. The queue makes
+// usb_midi_on_event's own worst case a fast, non-blocking xQueueSend --
+// display work happens entirely on its own low-priority task instead.
+typedef struct {
+    bool is_cc;
+    bool note_on; // meaningful only when !is_cc
+    uint8_t channel;
+    uint8_t data1; // note or CC controller number
+    uint8_t data2; // velocity or CC value
+} display_event_t;
 
-static void init_usb_phy(void) {
-    const usb_phy_config_t phy_config = {
-        .controller = USB_PHY_CTRL_OTG,
-        .target = USB_PHY_TARGET_UTMI,
-        .otg_mode = USB_OTG_MODE_HOST,
-        .otg_speed = USB_PHY_SPEED_UNDEFINED,
-        .ext_io_conf = NULL,
-        .otg_io_conf = NULL,
-    };
-    ESP_ERROR_CHECK(usb_new_phy(&phy_config, &s_usb_phy_handle));
-}
+static QueueHandle_t s_display_queue;
 
-void tuh_mount_cb(uint8_t daddr) {
-    ESP_LOGI(TAG, "USB device mounted, address=%u", daddr);
-}
-
-void tuh_umount_cb(uint8_t daddr) {
-    ESP_LOGI(TAG, "USB device unmounted, address=%u", daddr);
-}
-
-void tuh_midi_mount_cb(uint8_t idx, const tuh_midi_mount_cb_t *mount_cb_data) {
-    ESP_LOGI(TAG,
-             "MIDI interface mounted: idx=%u addr=%u itf=%u rx_cables=%u tx_cables=%u",
-             idx, mount_cb_data->daddr, mount_cb_data->bInterfaceNumber,
-             mount_cb_data->rx_cable_count, mount_cb_data->tx_cable_count);
-}
-
-void tuh_midi_umount_cb(uint8_t idx) {
-    ESP_LOGI(TAG, "MIDI interface unmounted: idx=%u", idx);
-}
-
-void tuh_midi_rx_cb(uint8_t idx, uint32_t xferred_bytes) {
-    (void) xferred_bytes;
-    uint8_t packet[4];
-    while (tuh_midi_packet_read(idx, packet)) {
-        ESP_LOGI(TAG, "MIDI packet [idx=%u]: %02x %02x %02x %02x",
-                 idx, packet[0], packet[1], packet[2], packet[3]);
-
-        // USB-MIDI Event Packet: packet[0] low nibble = Code Index Number,
-        // packet[1] = MIDI status byte, packet[2]/[3] = data bytes.
-        // CIN 0x8 = Note Off, 0x9 = Note On (velocity 0 is conventionally
-        // treated as Note Off too, per the MIDI spec), 0xB = Control
-        // Change -- per the USB-MIDI 1.0 CIN table, not guessed.
-        uint8_t cin = packet[0] & 0x0F;
-        uint8_t status = packet[1];
-        uint8_t channel = status & 0x0F;
-        uint8_t data1 = packet[2];
-        uint8_t data2 = packet[3];
-        if (cin == 0x9 && data2 > 0) {
-            update_display_for_note(true, channel, data1, data2);
-        } else if (cin == 0x8 || (cin == 0x9 && data2 == 0)) {
-            update_display_for_note(false, channel, data1, data2);
-        } else if (cin == 0xB) {
-            update_display_for_cc(channel, data1, data2);
+static void display_task(void *arg) {
+    (void) arg;
+    display_event_t evt;
+    while (true) {
+        if (xQueueReceive(s_display_queue, &evt, portMAX_DELAY)) {
+            if (evt.is_cc) {
+                update_display_for_cc(evt.channel, evt.data1, evt.data2);
+            } else {
+                update_display_for_note(evt.note_on, evt.channel, evt.data1, evt.data2);
+            }
         }
     }
 }
 
-static void usb_host_task(void *arg) {
-    (void) arg;
-
-    init_usb_phy();
-    ESP_LOGI(TAG, "init_usb_phy() done");
-
-    tusb_init();
-    ESP_LOGI(TAG, "tusb_init() done, entering tuh_task() loop -- "
-                  "plug in a USB-MIDI controller now");
-
-    while (1) {
-        tuh_task();
+// Called from usb_midi_host.c for every decoded USB-MIDI Event Packet
+// (raw status/data1/data2 bytes) from any claimed MIDIStreaming
+// interface, on whichever device/core happened to service that transfer.
+// Must never block -- see display_task above for why.
+void usb_midi_on_event(uint8_t status, uint8_t data1, uint8_t data2) {
+    // Status byte high nibble = MIDI message type, low nibble = channel.
+    // Note On with velocity 0 is conventionally treated as Note Off too,
+    // per the MIDI spec, not just when the message type is literally
+    // Note Off.
+    uint8_t message = status & 0xF0;
+    uint8_t channel = status & 0x0F;
+    display_event_t evt = {.channel = channel, .data1 = data1, .data2 = data2};
+    if (message == 0x90 && data2 > 0) {
+        voice_engine_note_on(data1, data2);
+        evt.is_cc = false;
+        evt.note_on = true;
+        xQueueSend(s_display_queue, &evt, 0); // non-blocking; drop on a full queue, display is cosmetic
+    } else if (message == 0x80 || (message == 0x90 && data2 == 0)) {
+        voice_engine_note_off(data1);
+        evt.is_cc = false;
+        evt.note_on = false;
+        xQueueSend(s_display_queue, &evt, 0);
+    } else if (message == 0xB0) {
+        evt.is_cc = true;
+        xQueueSend(s_display_queue, &evt, 0);
     }
 }
 
 void app_main(void) {
     init_display();
-
-    // Runs TinyUSB's host task on its own FreeRTOS task rather than
-    // app_main's, matching the pattern used by TinyUSB's own ESP-IDF
-    // examples (app_main can return; tuh_task() must run forever).
-    xTaskCreate(usb_host_task, "usb_host_task", 4096, NULL, 5, NULL);
+    voice_engine_init();
+    init_audio_output();
+    voice_engine_start_diag_task();
+    s_display_queue = xQueueCreate(16, sizeof(display_event_t));
+    xTaskCreatePinnedToCore(display_task, "display_task", 4096, NULL, 1, NULL, 1);
+    usb_midi_host_start();
 }

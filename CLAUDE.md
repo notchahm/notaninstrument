@@ -207,6 +207,43 @@ earlier RP2350 (Raspberry Pi Pico 2) prototype. It has:
    parse incoming Note On/Off bytes into `start_note`/`stop_note` calls
    (architecture decisions #1-#3), continuing the bring-up plan from
    there.
+   **UPDATE 2026-09-07 -- polyphonic voice engine built, ISR-driven,
+   fixed-point; chord-onset latency traced to TinyUSB itself, not the
+   device or our render path:** the full pipeline from the "Next" above
+   was completed (`voice_engine.c`, fixed-point Q16.16 mixer, real-time
+   safe, ISR-driven straight from the I2S `on_sent` callback -- see
+   `docs/polyphony-latency-investigation.md` for the fixed-point rewrite
+   and the FPU-in-ISR crash it fixed). After that, chords (2-4
+   near-simultaneous Note On messages) still showed a consistent
+   ~235-243ms onset gap between notes that should land together. Ruled
+   out, in order: scheduling contention, a voice-pool race, TinyUSB's own
+   internal debug logging (`CFG_TUSB_DEBUG`, a real and separate bug,
+   fixed), DMA buffer depth, task-vs-ISR rendering, the controller's own
+   arpeggiator, a second unrelated controller (Korg padKONTROL, same
+   symptom), and USB-hub/multi-device channel sharing (same symptom
+   direct-connected, no hub). A decoupled timing diagnostic
+   (`main/timing_diag.c/h`, cheap counter in the hot path, all `ESP_LOGI`
+   deferred to its own low-priority task) showed almost no USB transfer
+   activity during the gap, pointing at host-side scheduling. Read
+   `hcd_dwc2.c`'s NAK-retry logic and found bulk vs. periodic
+   (interrupt/isochronous) endpoints are rescheduled completely
+   differently there -- a real mechanism that could fully explain a fixed
+   delay, *if* these MIDI endpoints were interrupt-type. **They aren't**:
+   confirmed both controllers' MIDI endpoints are bulk
+   (`bmAttributes=0x2`, `bInterval=0`), so that theory doesn't apply.
+   Decisive test: wrote a minimal MIDI IN transfer loop
+   (`firmware/spike-usb-host-native/main/midi_native.c`, new) on top of
+   ESP-IDF's native USB Host Library instead of TinyUSB, reusing the same
+   timing diagnostic, on the same real hardware and controller. **Chord
+   onset gap dropped to 0-11ms** -- confirming the delay lives inside
+   TinyUSB's own driver stack on this ESP32-P4 DWC2 port, not in the
+   device, the endpoint type, or anything in this project's own audio/USB
+   handling. Full writeup, captured serial log, and the still-open choice
+   between switching the primary MIDI path to the native USB Host Library
+   (parsing gap: needs multi-cable/jack handling that TinyUSB's
+   `midi_host.c` gives for free) versus continuing to root-cause the exact
+   spot in vendored TinyUSB/DWC2 code responsible, is in
+   `docs/polyphony-latency-investigation.md`.
 
 ## Bring-up plan (in order — see docs/bring-up-plan.md for full detail)
 
@@ -283,15 +320,24 @@ firmware/
                               in components/tinyusb_host/ (the published
                               registry component is device-mode only).
                               Makefile wraps idf.py.
-  spike-usb-host-native/  -- bring-up step 2, proven fallback: ESP-IDF's
-                              native USB Host Library (espressif/usb
-                              component), not TinyUSB. Also confirmed
-                              enumerating the same real MPK Mini Play, but
-                              descriptor-dump only -- no MIDI event parsing
-                              written (would need a hand-written class
-                              driver, unlike TinyUSB's ready-made
-                              midi_host.c). Keep as a working reference,
-                              not the primary path. Makefile wraps idf.py.
+  spike-usb-host-native/  -- bring-up step 2, proven fallback, now also
+                              the polyphony-latency investigation's control
+                              group: ESP-IDF's native USB Host Library
+                              (espressif/usb component), not TinyUSB.
+                              Confirmed enumerating the same real MPK Mini
+                              Play. Originally descriptor-dump only; gained
+                              a minimal single-cable MIDI IN parser
+                              (main/midi_native.c, 2026-09-07) purpose-built
+                              to compare chord-onset timing against the
+                              TinyUSB path -- see architecture decision #4's
+                              2026-09-07 update and
+                              docs/polyphony-latency-investigation.md.
+                              Not a general MIDI class driver (no
+                              multi-cable/jack handling, unlike TinyUSB's
+                              ready-made midi_host.c) -- still a reference/
+                              fallback, not the primary path, pending the
+                              decision documented there. Makefile wraps
+                              idf.py.
   spike-usb-midi-arduino/ -- bring-up step 2, abandoned path: Arduino-ESP32
                               + Adafruit TinyUSB, confirmed dead end before
                               even reaching hardware (forces an external
@@ -319,6 +365,13 @@ docs/
   dynamic-sampling.md             -- stretch goal: turn live-recorded audio
                                       into a new playable instrument on-device
   dongle-dock-architecture.md     -- stretch goal: dongle/dock modularity
+  second-instrument-drums-todo.md -- investigated-not-started: adding a
+                                      drum kit as the second .nib
+                                      instrument, parser gap analysis
+  polyphony-latency-investigation.md -- ongoing: chord-onset lag, what's
+                                      been tried, the ISR/FPU dead end and
+                                      why, the identified fixed-point path
+                                      forward
 ```
 
 ## Open questions / TBD

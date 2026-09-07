@@ -1,3 +1,26 @@
 # Minimal defaults for the USB-MIDI host spike. `idf.py set-target esp32p4`
 # (see Makefile) fills in the rest of sdkconfig on first build.
 CONFIG_IDF_TARGET="esp32p4"
+
+# Custom partition table (partitions.csv) -- adds a dedicated "soundbank"
+# flash data partition for the built-in default .nib soundbank
+# (docs/multi-instrument-soundbanks.md), separate from the app partition so
+# firmware and soundbank content can be reflashed independently.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Default flash-size config is 2MB; this board actually has 16MB
+# (docs/hardware-bom.md) -- needed so the partition table above (~11.6MB
+# used) is accepted at build time, not just at flash time.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+
+# PSRAM is NOT enabled here: the soundbank pipeline went through two
+# PSRAM-dependent designs (raw PCM on flash, then Ogg Vorbis on flash
+# decoded to PSRAM at boot) before landing on IMA ADPCM, which decodes
+# live in the real-time render path straight out of mmap'd flash --
+# see tools/sfz_preprocessor/sfz_to_nib.py's module docstring for the
+# full history of why. Neither PSRAM nor a boot-time decode step is
+# needed for this design; re-add CONFIG_SPIRAM=y (this board does have
+# 32MB, confirmed via firmware/notaninstrument-p4's bring-up) if a future
+# feature actually needs it.

@@ -9,6 +9,7 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "usb/usb_host.h"
+#include "midi_native.h"
 
 #define CLIENT_NUM_EVENT_MSG        5
 
@@ -136,6 +137,11 @@ static void action_get_config_desc(usb_device_t *device_obj)
     const usb_config_desc_t *config_desc;
     ESP_ERROR_CHECK(usb_host_get_active_config_descriptor(device_obj->dev_hdl, &config_desc));
     usb_print_config_descriptor(config_desc, NULL);
+    // If this device has a MIDIStreaming interface, claim it and start the
+    // raw-timing IN-transfer loop (see midi_native.h) -- this is the whole
+    // point of this spike right now: compare chord-onset latency here
+    // against the TinyUSB path in spike-usb-midi-idf.
+    midi_native_try_claim(device_obj->client_hdl, device_obj->dev_hdl, config_desc);
     // Get the device's string descriptors next
     device_obj->actions |= ACTION_GET_STR_DESC;
 }
