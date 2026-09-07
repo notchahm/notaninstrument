@@ -1,17 +1,23 @@
-// Bring-up steps 1 + 3 (docs/bring-up-plan.md): toolchain smoke test, not
-// the real firmware. Blinks an LED, logs chip/PSRAM info over serial, and
-// drives an SSD1306 OLED (midi_display.cpp) with a periodic demo cycle so
-// both the serial and I2C display paths are proven before building
-// anything else on top of them.
+// Bring-up steps 1 + 3 + 4 (docs/bring-up-plan.md): toolchain smoke test,
+// not the real firmware. Blinks an LED, logs chip/PSRAM info over serial,
+// drives an SSD1306 OLED (midi_display.cpp) with a periodic demo cycle,
+// and plays a continuous test tone through a PCM5102A over I2S
+// (audio_output.cpp) -- proves the I2S wiring/clocking/DMA path in
+// isolation before MIDI or SD touch it.
 
 #include "midi_display.h"
+#include "audio_output.h"
 
-// TBD: exact onboard LED GPIO is unconfirmed for the Waveshare
-// ESP32-P4-WIFI6-DEV-KIT (see docs/hardware-bom.md, "Pin assignments").
-// GPIO2 is the common default on many ESP32 dev boards but has NOT been
-// verified against this board's schematic/silkscreen yet. Update this once
-// confirmed, and record it in docs/hardware-bom.md.
-#define LED_PIN 2
+// There is no GPIO-controlled LED on this board at all (confirmed against
+// the vendor schematic, docs/datasheets/ESP32-P4-WIFI6-DEV-KIT-schematic.pdf)
+// -- the only LED present is a fixed power-on indicator wired straight to
+// VCC_5V, not software-controllable. This is a pure software heartbeat
+// with no physical indicator, kept for the serial "tick" log only.
+// GPIO22 was picked as a plain, otherwise-unused header pin -- GPIO2 was
+// the original guess and turned out to double as PCM5102_FMT_GPIO
+// (audio_output.cpp), which caused an audible "pulsing" artifact twice a
+// second by scrambling the DAC's format-select pin every toggle.
+#define LED_PIN 22
 
 #define SERIAL_BAUD 115200
 #define BLINK_INTERVAL_MS 500
@@ -64,6 +70,11 @@ void setup() {
 
   initialize_midi_display();
   display_text("notaninstrument\nP4 bring-up");
+
+  initialize_audio_output();
+  start_audio_output_task();
+  Serial.println("Audio: 480Hz test tone playing continuously via PCM5102A "
+                  "(BCK=GPIO4, LRCK=GPIO5, DIN=GPIO6)");
 }
 
 void loop() {
@@ -78,6 +89,7 @@ void loop() {
     last_status_ms = now;
     print_status_banner();
     scan_i2c_bus();
+    print_audio_status();
   }
   if (now - last_display_demo_ms >= DISPLAY_DEMO_INTERVAL_MS) {
     last_display_demo_ms = now;

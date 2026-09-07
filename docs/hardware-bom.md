@@ -158,6 +158,13 @@ hub ever becomes a real constraint (e.g. enclosure space).
 |---|---|---|
 | I2C SDA (SSD1306) | GPIO7 | Confirmed working 2026-09-06, real hardware. |
 | I2C SCL (SSD1306) | GPIO8 | Confirmed working 2026-09-06, real hardware. |
+| I2S BCK (PCM5102A) | GPIO4 | Confirmed working 2026-09-06, real hardware. |
+| I2S LRCK/WS (PCM5102A) | GPIO5 | Confirmed working 2026-09-06, real hardware. |
+| I2S DIN (PCM5102A) | GPIO6 | Confirmed working 2026-09-06, real hardware. |
+| PCM5102A XSMT | GPIO3 | Soft-mute control, driven HIGH by firmware after I2S starts. This module leaves XSMT floating on-board (no onboard pull-up) -- left unconnected, output stays muted. |
+| PCM5102A FMT | GPIO2 | Format select, driven LOW (I2S standard) by firmware. **Do not reuse this pin for anything else** -- see LED note below. |
+| PCM5102A FLT | GPIO1 | Filter-response select, driven LOW (normal/sharp roll-off) by firmware. |
+| PCM5102A SCK | tied directly to GND (not a GPIO) | **Real hardware gotcha, confirmed 2026-09-06**: this module also breaks out a separate SCK pin (distinct from BCK) that must be grounded to select internal-PLL clock mode. Left floating, the DAC never locks onto a clock and stays completely silent despite otherwise-correct I2S data, unmuted XSMT, and zero I2S driver errors -- this was the actual root cause of an extended "no sound" investigation, not a firmware bug. |
 
 An I2C bus scan on these pins (`firmware/notaninstrument-p4`'s
 `scan_i2c_bus()`) found the SSD1306 at `0x3C` and a second device at
@@ -168,9 +175,17 @@ currently a problem, since the two devices' addresses don't collide and
 both ACK correctly. Worth re-checking if the ES8311 is ever actually used
 for anything (it isn't currently -- see "What this is" in CLAUDE.md).
 
+**No GPIO-controlled LED exists on this board** (confirmed against the
+vendor schematic, 2026-09-06) -- the only LED (`LED1`, near the USB power
+section) is a fixed power-on indicator wired straight to `VCC_5V`, not
+software-controllable. (`LED0`/`LED1-4`/etc. elsewhere in the schematic
+belong to the CH334F hub and Ethernet PHY chips' own status outputs, not
+the ESP32-P4.) `firmware/notaninstrument-p4`'s blink is a pure software
+heartbeat with no physical indicator -- it originally used GPIO2, which
+turned out to double as the PCM5102A's FMT pin above and caused an
+audible artifact; now on GPIO22, a plain unused header pin.
+
 Still TBD — fill in once checked:
-- Which I2S pins to use for the PCM5102 (a full I2S peripheral separate from
-  whatever the ES8311 uses, if that codec is left connected at all)
 - Whether the board exposes a labeled 5V rail on the GPIO header for future
   battery-boost input, separate from the USB-C power/programming port
 

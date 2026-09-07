@@ -167,11 +167,59 @@ page-oriented text API can render) caused visible lag. Fixed by rate-limiting
 actual screen writes to 20Hz and overwriting fixed-width fields in place
 instead of clearing first -- see `firmware/spike-usb-midi-idf/README.md`.
 
-## 4. Audio output path (PCM5102 over I2S)
+## 4. Audio output path (PCM5102 over I2S) -- DONE (2026-09-06, confirmed on real hardware)
 Get one hard-coded test tone or short WAV playing cleanly through the DAC
 before touching MIDI or SD. Proves I2S wiring, clocking, and DMA buffering in
 isolation, so later audio glitches can be localized to mixing/SD rather than
 the output chain itself.
+
+Confirmed via `firmware/notaninstrument-p4` (extended again, same pattern
+as steps 1 and 3): a 480Hz test tone, precomputed as one exact-period
+cycle at init and replayed continuously via DMA (`i2s_channel_write` in
+its own FreeRTOS task) -- not per-sample `sin()` in a hot loop, per
+CLAUDE.md's documented lesson from the RP2350 reference code. Confirmed
+pins: BCK=GPIO4, LRCK=GPIO5, DIN=GPIO6 (see `docs/hardware-bom.md`).
+
+Three real problems, all found and fixed on real hardware, worth
+recording since none of them were firmware logic bugs in the usual sense:
+
+1. **Silent despite everything reading correct.** `i2s_new_channel`,
+   `i2s_channel_init_std_mode`, and `i2s_channel_enable` all returned
+   `ESP_OK`; the write task completed thousands of writes with zero
+   errors and the right byte count every time. Still no sound. Isolated
+   the cause by testing the onboard ES8311 codec instead (a temporary,
+   since-removed diagnostic -- ES8311 needs I2C register configuration,
+   ported from Espressif's own `esp-bsp` reference driver, since it's a
+   real codec chip, not a simple hardware-configured DAC like the
+   PCM5102A) on a separate I2S peripheral (`I2S_NUM_1`) running
+   simultaneously with the PCM5102A path (`I2S_NUM_0`) -- confirmed sound
+   through the board's onboard headphone jack, which proved the P4's
+   I2S/DMA output path itself was completely healthy and narrowed the
+   problem to the PCM5102A module specifically.
+2. **XSMT, FMT, FLT floating.** This particular PCM5102A module breaks
+   these three control pins out separately rather than hard-wiring them
+   on-board, so they were floating (undefined logic level) until firmware
+   explicitly drove them. Fixed by driving XSMT=GPIO3 (HIGH after I2S
+   starts, to unmute), FMT=GPIO2 (LOW, I2S standard format), FLT=GPIO1
+   (LOW, normal roll-off).
+3. **SCK left floating -- the actual root cause of the silence.** Distinct
+   from BCK, this module has a separate SCK pin that must be tied to GND
+   (a physical wire, not a GPIO) to select the DAC's internal-PLL clock
+   mode. Left floating, the chip never locks onto any clock and stays
+   silent -- regardless of how correct the I2S data, XSMT, FMT, and FLT
+   all are. This is apparently a well-known gotcha for this style of
+   breakout board, not something the datasheet's block diagram alone
+   makes obvious.
+
+One more real bug, unrelated to audio config itself: the sketch's LED
+blink test used GPIO2 as `LED_PIN`, which is the exact same pin as
+`PCM5102_FMT_GPIO` above -- toggling it twice a second (the blink rate)
+was scrambling the DAC's format-select line in real time, audible as a
+volume "pulsing" synchronized with the blink. Checked against the vendor
+schematic and confirmed **this board has no GPIO-controlled LED at all**
+(the only LED is a fixed power-on indicator wired to `VCC_5V`) -- moved
+the blink to GPIO22 (a plain, otherwise-unused header pin) since it was
+never wired to a real indicator anyway.
 
 ## 5. Soundbank pipeline: offline tool + on-device loading
 Build and test the SFZ->binary preprocessing tool on a computer first (no
