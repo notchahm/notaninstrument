@@ -33,5 +33,11 @@ tools/sfz_preprocessor/venv/
 tools/sfz_preprocessor/adpcm-xq/adpcm-xq
 tools/sfz_preprocessor/__pycache__/
 
+# Same deal for the QOA encoder/decoder CLIs (tools/sfz_preprocessor/qoa/)
+# -- source-only in git, compiled on first use by ensure_qoa_encoder_built()/
+# ensure_qoa_decoder_built().
+tools/sfz_preprocessor/qoa/qoa-encode
+tools/sfz_preprocessor/qoa/qoa-decode
+
 # Claude Code session-local runtime state, not project config
 .claude/scheduled_tasks.lock

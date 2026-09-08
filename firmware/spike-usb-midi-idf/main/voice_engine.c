@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nib_loader.h"
+#include "qoa_decode.h"
 
 static const char *TAG = "voice_engine";
 
@@ -39,7 +40,7 @@ static const char *TAG = "voice_engine";
 #define HELD_DECAY_SECONDS_HARD 6.0f  // velocity 127 (hardest)
 
 // Fixed-point throughout the hot per-sample path (phase accumulation,
-// interpolation, envelope, mix scaling, and now ADPCM decode itself --
+// interpolation, envelope, mix scaling, and the ADPCM/QOA decode itself --
 // adpcm_decode.c) instead of float. Two reasons, not one: this is
 // well-precedented in embedded audio regardless of ISR concerns (GBA/
 // SNES-era sound hardware and most tracker/chiptune engines used integer
@@ -100,16 +101,25 @@ typedef struct {
     uint32_t loop_start_fixed;
     uint32_t loop_end_fixed;
     uint32_t sample_length_fixed;
-    // Real-time ADPCM decode state, one per channel -- see
-    // adpcm_decode.h. Each stream tracks its own running predictor/step/
-    // block position; read_voice_frame advances them to whatever frame
-    // voice->phase currently points at, and advance_voice resets them to
-    // loop_start (an O(1) jump to that block's own header) on a loop wrap.
-    adpcm_stream_t left, right;
+    // Real-time codec decode state -- see adpcm_decode.h/qoa_decode.h.
+    // Each stream tracks its own running predictor/block-or-frame
+    // position; read_voice_frame advances it to whatever frame
+    // voice->phase currently points at, and advance_voice resets it to
+    // loop_start (an O(1) jump to that block/frame's own header) on a
+    // loop wrap. Which union member is live is determined by
+    // s_bank.compression, checked once per call in the few functions
+    // below that touch it -- only one bank is ever loaded at a time, so
+    // this is a single, branch-predictor-friendly check, not a per-voice
+    // property.
+    union {
+        struct { adpcm_stream_t left, right; } adpcm;
+        qoa_stream_t qoa;
+    } codec;
     // The sample value exactly at loop_start, cached once at note-on
-    // (loop_start is always a block boundary, so this is a direct header
-    // read, not a decode) -- used only for the one frame per loop cycle
-    // where interpolation needs the sample just past loop_end, which is
+    // (loop_start is always a block/frame boundary, so this is a cheap
+    // direct read for ADPCM or a single-frame decode for QOA, not a full
+    // seek) -- used only for the one frame per loop cycle where
+    // interpolation needs the sample just past loop_end, which is
     // actually loop_start's sample once the loop has wrapped. See
     // read_voice_frame.
     int16_t loop_start_sample_left, loop_start_sample_right;
@@ -219,6 +229,33 @@ static voice_t *find_voice_to_use(void) {
     return oldest;
 }
 
+// QOA regions store a hybrid layout (see sfz_to_nib.py's build_nib):
+// region->qoa_raw_prefix_samples samples of raw, uncompressed PCM first,
+// then QOA frames for the rest. Fixes an audible click at note-on: QOA
+// has no ADPCM-style "first sample of a block is stored directly"
+// shortcut (every sample, including a frame's first, comes from a 4-tap
+// LMS predictor that starts each region cold), and a piano hammer
+// strike's fast, loud transient produces real, audible quantization
+// error there even once the predictor is primed on this same prefix
+// (confirmed and measured on real hardware: QOA's per-slice-independent
+// scale-factor search has no adpcm-xq-style cross-sample noise shaping,
+// so its error is audibly jitterier during the transient than ADPCM's
+// despite similar average magnitude -- see docs/
+// polyphony-latency-investigation.md's sibling QOA-experiment notes).
+//
+// Per-region, not a shared bank-wide constant: measured directly (FFT
+// comparison of decoded output against the clean pre-codec signal) that
+// how long a note's transient stays "hard for QOA" scales with how hard
+// the note was hit -- a soft hit settles in ~100-150ms, the hardest
+// hit needed ~400ms -- so sfz_to_nib.py's find_qoa_raw_prefix_samples()
+// measures each region's own transient and sizes its raw window
+// accordingly, instead of over-paying storage for every soft note to
+// cover the rare hard one, or under-covering the hard ones with a
+// smaller fixed width.
+static inline const uint8_t *qoa_compressed_data(const nib_region_t *region) {
+    return region->left_data + (size_t) region->qoa_raw_prefix_samples * 2 * sizeof(int16_t);
+}
+
 bool voice_engine_init(void) {
     memset(s_voices, 0, sizeof(s_voices));
     s_bank_loaded = nib_loader_init(&s_bank);
@@ -254,10 +291,22 @@ void voice_engine_note_on(uint8_t note, uint8_t velocity) {
     bool has_loop = region->loop_end > region->loop_start;
     int16_t loop_sample_left = 0, loop_sample_right = 0;
     if (has_loop) {
-        loop_sample_left = adpcm_block_header_sample(region->left_data, s_bank.adpcm_block_size,
-                                                       s_bank.adpcm_samples_per_block, region->loop_start);
-        loop_sample_right = adpcm_block_header_sample(region->right_data, s_bank.adpcm_block_size,
-                                                        s_bank.adpcm_samples_per_block, region->loop_start);
+        if (s_bank.compression == NIB_COMPRESSION_ADPCM) {
+            loop_sample_left = adpcm_block_header_sample(region->left_data, s_bank.codec_block_size,
+                                                           s_bank.codec_samples_per_unit, region->loop_start);
+            loop_sample_right = adpcm_block_header_sample(region->right_data, s_bank.codec_block_size,
+                                                            s_bank.codec_samples_per_unit, region->loop_start);
+        } else {
+            // loop_start is always well past the raw-PCM prefix (it's
+            // deep in the sustain), so it's always addressable in
+            // QOA-relative terms -- see qoa_compressed_data() above.
+            uint32_t qoa_loop_start = region->loop_start - region->qoa_raw_prefix_samples;
+            const uint8_t *qoa_data = qoa_compressed_data(region);
+            loop_sample_left = qoa_frame_first_sample(qoa_data, s_bank.codec_block_size,
+                                                        s_bank.codec_samples_per_unit, qoa_loop_start, 0);
+            loop_sample_right = qoa_frame_first_sample(qoa_data, s_bank.codec_block_size,
+                                                         s_bank.codec_samples_per_unit, qoa_loop_start, 1);
+        }
     }
 
     portENTER_CRITICAL(&s_voice_lock);
@@ -277,8 +326,22 @@ void voice_engine_note_on(uint8_t note, uint8_t velocity) {
     voice->loop_start_fixed = region->loop_start << PHASE_FRAC_BITS;
     voice->loop_end_fixed = region->loop_end << PHASE_FRAC_BITS;
     voice->sample_length_fixed = region->sample_length << PHASE_FRAC_BITS;
-    adpcm_stream_reset(&voice->left, region->left_data, s_bank.adpcm_block_size, s_bank.adpcm_samples_per_block, 0);
-    adpcm_stream_reset(&voice->right, region->right_data, s_bank.adpcm_block_size, s_bank.adpcm_samples_per_block, 0);
+    if (s_bank.compression == NIB_COMPRESSION_ADPCM) {
+        adpcm_stream_reset(&voice->codec.adpcm.left, region->left_data,
+                            s_bank.codec_block_size, s_bank.codec_samples_per_unit, 0);
+        adpcm_stream_reset(&voice->codec.adpcm.right, region->right_data,
+                            s_bank.codec_block_size, s_bank.codec_samples_per_unit, 0);
+    } else {
+        // The QOA stream itself only ever addresses the compressed
+        // portion (past the raw-PCM prefix) -- read_voice_frame handles
+        // the prefix directly, so the stream's own "sample 0" is
+        // QOA-relative, not absolute. It's reset here (rather than only
+        // lazily on first use) so its decoded[][0] is already valid the
+        // moment read_voice_frame needs the prefix/QOA boundary sample --
+        // see the comment there.
+        qoa_stream_reset(&voice->codec.qoa, qoa_compressed_data(region),
+                          s_bank.codec_block_size, s_bank.codec_samples_per_unit, 0);
+    }
     voice->loop_start_sample_left = loop_sample_left;
     voice->loop_start_sample_right = loop_sample_right;
     voice->envelope = ENVELOPE_MAX;
@@ -318,14 +381,47 @@ static inline void read_voice_frame(voice_t *voice, int32_t *left, int32_t *righ
     // phase_inc is close to 1.0 for the modest per-region pitch shifts
     // this soundbank uses) so decoded[0]/decoded[1] cover idx/idx+1.
     // idx+1 is allowed to run one frame past this region's real audio
-    // here -- see adpcm_decode.h's seek_forward doc comment for why
-    // that's safe; its result is simply never used below when that
-    // happens (the loop-seam substitution takes over instead).
-    adpcm_stream_seek_forward(&voice->left, idx);
-    adpcm_stream_seek_forward(&voice->right, idx);
+    // here -- see adpcm_decode.h/qoa_decode.h's seek_forward doc comments
+    // for why that's safe; its result is simply never used below when
+    // that happens (the loop-seam substitution takes over instead).
+    int32_t l0, r0, l1_normal, r1_normal;
+    if (s_bank.compression == NIB_COMPRESSION_ADPCM) {
+        adpcm_stream_seek_forward(&voice->codec.adpcm.left, idx);
+        adpcm_stream_seek_forward(&voice->codec.adpcm.right, idx);
+        l0 = voice->codec.adpcm.left.decoded[0];
+        r0 = voice->codec.adpcm.right.decoded[0];
+        l1_normal = voice->codec.adpcm.left.decoded[1];
+        r1_normal = voice->codec.adpcm.right.decoded[1];
+    } else {
+        uint32_t raw_prefix_samples = voice->region->qoa_raw_prefix_samples;
+        if (idx < raw_prefix_samples) {
+            // Still inside the raw-PCM prefix (see qoa_compressed_data()
+            // and voice_engine_note_on) -- plain pointer arithmetic,
+            // exact, no predictor involved at all.
+            const int16_t *raw = (const int16_t *) voice->region->left_data;
+            l0 = raw[idx * 2];
+            r0 = raw[idx * 2 + 1];
+            if (idx + 1 < raw_prefix_samples) {
+                l1_normal = raw[(idx + 1) * 2];
+                r1_normal = raw[(idx + 1) * 2 + 1];
+            } else {
+                // idx+1 lands exactly on the prefix/QOA boundary, i.e.
+                // QOA-relative sample 0 -- already sitting in
+                // decoded[ch][0] from the reset() at note-on, since the
+                // stream is never advanced while idx is still within the
+                // prefix.
+                l1_normal = voice->codec.qoa.decoded[0][0];
+                r1_normal = voice->codec.qoa.decoded[1][0];
+            }
+        } else {
+            qoa_stream_seek_forward(&voice->codec.qoa, idx - raw_prefix_samples);
+            l0 = voice->codec.qoa.decoded[0][0];
+            r0 = voice->codec.qoa.decoded[1][0];
+            l1_normal = voice->codec.qoa.decoded[0][1];
+            r1_normal = voice->codec.qoa.decoded[1][1];
+        }
+    }
 
-    int32_t l0 = voice->left.decoded[0];
-    int32_t r0 = voice->right.decoded[0];
     int32_t l1, r1;
     if (idx + 1 >= bound_idx) {
         // Wrap to the loop start's sample for interpolation continuity
@@ -340,8 +436,8 @@ static inline void read_voice_frame(voice_t *voice, int32_t *left, int32_t *righ
             r1 = r0;
         }
     } else {
-        l1 = voice->left.decoded[1];
-        r1 = voice->right.decoded[1];
+        l1 = l1_normal;
+        r1 = r1_normal;
     }
 
     // Integer linear interpolation: frame0*(1-frac) + frame1*frac, frac
@@ -360,17 +456,35 @@ static inline void advance_voice(voice_t *voice) {
     if (has_loop && new_phase >= voice->loop_end_fixed) {
         uint32_t loop_len = voice->loop_end_fixed - voice->loop_start_fixed;
         new_phase = voice->loop_start_fixed + (new_phase - voice->loop_start_fixed) % loop_len;
-        // Loop wrap: reset both ADPCM streams to loop_start's own block
-        // header -- O(1) regardless of how long the loop or the note's
-        // been held, which is the entire point of snapping loop_start to
-        // a block boundary at encode time (sfz_to_nib.py). The next
-        // read_voice_frame call decodes forward from there to wherever
-        // new_phase's remainder actually lands, same as it would for any
-        // other frame.
-        adpcm_stream_reset(&voice->left, voice->region->left_data,
-                            voice->left.block_size, voice->left.samples_per_block, voice->region->loop_start);
-        adpcm_stream_reset(&voice->right, voice->region->right_data,
-                            voice->right.block_size, voice->right.samples_per_block, voice->region->loop_start);
+        // Loop wrap: reset the codec stream(s) to loop_start's own block/
+        // frame header -- O(1) regardless of how long the loop or the
+        // note's been held, which is the entire point of snapping
+        // loop_start to a block/frame boundary at encode time
+        // (sfz_to_nib.py). The next read_voice_frame call decodes forward
+        // from there to wherever new_phase's remainder actually lands,
+        // same as it would for any other frame.
+        if (s_bank.compression == NIB_COMPRESSION_ADPCM) {
+            adpcm_stream_reset(&voice->codec.adpcm.left, voice->region->left_data,
+                                s_bank.codec_block_size, s_bank.codec_samples_per_unit, voice->region->loop_start);
+            adpcm_stream_reset(&voice->codec.adpcm.right, voice->region->right_data,
+                                s_bank.codec_block_size, s_bank.codec_samples_per_unit, voice->region->loop_start);
+        } else {
+            // Same QOA-relative addressing as note_on/read_voice_frame --
+            // the stream only ever knows about the post-prefix span, so
+            // both the data pointer and the sample position need the
+            // prefix subtracted out here too. This was missed when the
+            // hybrid raw-PCM-prefix layout was added: with a 1-frame
+            // prefix the resulting offset error was small enough to be
+            // masked by other artifacts, but widening the prefix to 5
+            // frames (50ms) made every loop-wrap reset decode from a
+            // badly wrong byte offset -- garbage LMS state and slice
+            // data played at full sustain volume, which is what a held
+            // note looping sounded like "two notes at once, distorted,
+            // at high gain."
+            qoa_stream_reset(&voice->codec.qoa, qoa_compressed_data(voice->region),
+                              s_bank.codec_block_size, s_bank.codec_samples_per_unit,
+                              voice->region->loop_start - voice->region->qoa_raw_prefix_samples);
+        }
     } else if (!has_loop && new_phase >= voice->sample_length_fixed) {
         voice->state = VOICE_FREE; // reached the natural end with no loop to sustain into
     }
@@ -390,6 +504,54 @@ static inline void advance_voice(voice_t *voice) {
             voice->envelope -= rate;
         }
     }
+}
+
+// Persistent (across render_locked calls) smoothed version of
+// INV_SQRT_TABLE[active] -- see its use below for why this exists.
+// render_locked only ever runs with s_voice_lock held (by either
+// caller), so this file-scope static needs no separate locking.
+static uint32_t s_mix_scale = 65536; // Q16.16, starts at unity gain
+
+// Post-mix de-hiss low-pass. Confirmed by direct offline decode + FFT
+// comparison (both codecs, against the exact clean pre-codec PCM) that a
+// piano hammer strike's fast, loud transient makes both ADPCM and QOA
+// inject real reconstruction noise concentrated at 8-16kHz -- 11-45x
+// (11-33dB) more energy there than the real source audio has, versus
+// only a few dB of difference below ~2kHz. Not a bug in either codec:
+// it's the ordinary cost of quantizing a fast amplitude change at this
+// compression ratio, present in both paths (ruling out a codec-specific
+// defect) and *not* something a pre-encode low-pass on the source audio
+// can fix (checked and rejected: the noise is generated by the encoder's
+// own quantization of the transient, not inherited from existing
+// high-frequency content in the source -- filtering the input doesn't
+// stop the encoder from having to quantize a sharp step). Filtering the
+// final decoded/mixed output instead works regardless of which note,
+// velocity, or codec produced it.
+//
+// 2 cascaded one-pole stages (~12dB/octave combined) at a one-pole -3dB
+// point of 9kHz: deliberately more conservative than this filter's first
+// tuning (was 3 stages @ 6kHz, -18 to -22dB by 8-16kHz) now that QOA
+// (the primary codec as of this tuning -- see sfz_to_nib.py's --codec
+// default) also has its own per-region adaptive raw-PCM-prefix width
+// (find_qoa_raw_prefix_samples) doing real work to reduce this same
+// noise before it ever reaches this filter. Leaves bass/mid content
+// close to untouched (<0.5dB below 2kHz, ~1.4dB at 4kHz -- versus the
+// old tuning's ~4.5dB at 4kHz) while still cutting a meaningful 7-9dB by
+// 12-16kHz. Lighter than the old tuning in absolute terms, but no longer
+// carrying the whole burden alone.
+#define OUTPUT_LOWPASS_ALPHA_Q16 45360 // one-pole alpha for fc=9kHz @ 48kHz, Q16.16
+#define OUTPUT_LOWPASS_STAGES 2
+
+static int32_t s_lowpass_left[OUTPUT_LOWPASS_STAGES] = {0};
+static int32_t s_lowpass_right[OUTPUT_LOWPASS_STAGES] = {0};
+
+static inline int32_t one_pole_lowpass_cascade(int32_t *state, int32_t input) {
+    int32_t x = input;
+    for (int s = 0; s < OUTPUT_LOWPASS_STAGES; s++) {
+        state[s] += (int32_t) (((int64_t) (x - state[s]) * OUTPUT_LOWPASS_ALPHA_Q16) >> 16);
+        x = state[s];
+    }
+    return x;
 }
 
 // Shared mixing core, no locking -- callers take s_voice_lock with
@@ -417,19 +579,48 @@ static void render_locked(int16_t *out, int frame_count) {
 
         // Scale by 1/sqrt(active voices) rather than hard-clamping on
         // overflow (CLAUDE.md's documented lesson from the RP2350
-        // reference code -- hard clamping there "sounds harsh"). Product
-        // needs int64_t: left_sum can be a few hundred thousand in
-        // magnitude (up to MAX_POLYPHONY int16-range voices summed) times
-        // a Q16.16 factor up to 65536.
-        int64_t left_scaled = ((int64_t) left_sum * INV_SQRT_TABLE[active]) >> 16;
-        int64_t right_scaled = ((int64_t) right_sum * INV_SQRT_TABLE[active]) >> 16;
+        // reference code -- hard clamping there "sounds harsh"). But
+        // INV_SQRT_TABLE[active] is a *discontinuous* function of a
+        // discrete voice count -- applying it as a direct, instantaneous
+        // per-sample multiplier means the moment a second voice starts
+        // (even one still silent in its own attack ramp), the scale
+        // applied to the *first, already-audible* voice snaps from
+        // 65536 (1.0) to 46341 (~0.707) in a single sample: a real, ~3dB
+        // step on sound that's already playing. Confirmed on real
+        // hardware as an audible click specifically on retriggering a
+        // note before its previous voice finished releasing (which is
+        // exactly when a second voice appears next to an already-loud
+        // first one) and confirmed absent on a solo note from silence
+        // (0->1 active has no already-audible signal to step). Chasing
+        // the table value with a one-pole smoother instead of snapping
+        // to it turns that step into an inaudible ~5ms fade. Holding the
+        // target at unity (rather than chasing INV_SQRT_TABLE[0]=0) when
+        // no voices are active keeps a fresh solo note starting exactly
+        // where it always has -- at rest, unity gain, no added fade-in.
+        uint32_t mix_target = (active > 0) ? INV_SQRT_TABLE[active] : 65536u;
+        s_mix_scale = (uint32_t) ((int32_t) s_mix_scale +
+                                   (((int32_t) mix_target - (int32_t) s_mix_scale) >> 8));
+
+        // Product needs int64_t: left_sum can be a few hundred thousand
+        // in magnitude (up to MAX_POLYPHONY int16-range voices summed)
+        // times a Q16.16 factor up to 65536.
+        int64_t left_scaled = ((int64_t) left_sum * s_mix_scale) >> 16;
+        int64_t right_scaled = ((int64_t) right_sum * s_mix_scale) >> 16;
         if (left_scaled > 32767) left_scaled = 32767;
         else if (left_scaled < -32768) left_scaled = -32768;
         if (right_scaled > 32767) right_scaled = 32767;
         else if (right_scaled < -32768) right_scaled = -32768;
 
-        out[i * 2] = (int16_t) left_scaled;
-        out[i * 2 + 1] = (int16_t) right_scaled;
+        // Post-mix de-hiss low-pass -- see OUTPUT_LOWPASS_ALPHA_Q16's
+        // comment for why this exists. Applied after mixing/scaling
+        // (once per output sample, regardless of polyphony) rather than
+        // per-voice: it's cleaning up reconstruction noise from whatever
+        // codec(s) produced the mixed signal, not anything voice-specific.
+        int32_t left_filtered = one_pole_lowpass_cascade(s_lowpass_left, (int32_t) left_scaled);
+        int32_t right_filtered = one_pole_lowpass_cascade(s_lowpass_right, (int32_t) right_scaled);
+
+        out[i * 2] = (int16_t) left_filtered;
+        out[i * 2 + 1] = (int16_t) right_filtered;
     }
 }
 
@@ -442,7 +633,7 @@ void voice_engine_render(int16_t *out, int frame_count) {
 // ISR-context counterpart, called directly from audio_output.c's I2S
 // on_sent callback (a real hardware interrupt firing the instant a DMA
 // buffer drains). This is safe specifically because render_locked above
-// (now including the ADPCM decode inside read_voice_frame/advance_voice)
+// (now including the ADPCM/QOA decode inside read_voice_frame/advance_voice)
 // is pure integer/fixed-point -- ESP-IDF's RISC-V FreeRTOS port
 // hard-forbids any FPU instruction in ISR context (confirmed on real
 // hardware: an earlier float-based version of this function crashed

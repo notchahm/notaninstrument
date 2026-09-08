@@ -1,1 +1,1 @@
-idf_component_register(SRCS "main.c" "audio_output.c" "voice_engine.c" "nib_loader.c" "usb_midi_host.c" "adpcm_decode.c" INCLUDE_DIRS "." PRIV_REQUIRES esp_hw_support esp_driver_i2c esp_driver_i2s esp_driver_gpio k0i05__esp_ssd1306 esp_timer esp_partition)
+idf_component_register(SRCS "main.c" "audio_output.c" "voice_engine.c" "nib_loader.c" "usb_midi_host.c" "adpcm_decode.c" "qoa_decode.c" INCLUDE_DIRS "." PRIV_REQUIRES esp_hw_support esp_driver_i2c esp_driver_i2s esp_driver_gpio k0i05__esp_ssd1306 esp_timer esp_partition)

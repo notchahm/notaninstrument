@@ -8,7 +8,7 @@
 static const char *TAG = "nib_loader";
 
 // Header/region layout matches tools/sfz_preprocessor/sfz_to_nib.py's
-// struct.pack format strings exactly ('<4sIBBBH32sIIH' / '<BBBBBIIIIIII').
+// struct.pack format strings exactly ('<4sIBBBH32sIIH' / '<BBBBBIIIIIIII').
 // Deliberately NOT read via a C struct cast: several fields land on
 // non-4-byte-aligned offsets, and an unaligned uint32_t/uint16_t pointer
 // access is undefined behavior / a possible fault depending on the core's
@@ -16,8 +16,18 @@ static const char *TAG = "nib_loader";
 // slower but correct regardless of alignment or compiler struct padding
 // choices on either side (Python vs. C).
 #define NIB_HEADER_SIZE 55
-#define NIB_REGION_SIZE 33
-#define COMPRESSION_ADPCM 2
+// 5 B fields + 8 u32 fields -- the trailing u32 is qoa_raw_prefix_samples
+// (0 for ADPCM regions), added when the QOA raw-PCM prefix became
+// per-region instead of a shared bank-wide constant (see nib_loader.h).
+#define NIB_REGION_SIZE 37
+
+// QOA frame layout constants (qoa_decode.c's QOA_FRAME_HEADER_SIZE/
+// QOA_LMS_STATE_SIZE_STEREO restated here to invert sfz_to_nib.py's
+// qoa_frame_size_bytes() -- the .nib header only stores the frame's byte
+// size, not its sample count, so this loader has to derive the latter,
+// same as it derives ADPCM's samples_per_block from its block size).
+#define QOA_FRAME_HEADER_AND_LMS_BYTES 40 // 8-byte header + 32 bytes stereo LMS state
+#define QOA_SLICE_BYTES_STEREO 16         // one 8-byte slice per channel per 20 samples
 
 static uint32_t read_u32_le(const uint8_t *p) {
     return (uint32_t) p[0] | ((uint32_t) p[1] << 8) | ((uint32_t) p[2] << 16) | ((uint32_t) p[3] << 24);
@@ -62,22 +72,35 @@ bool nib_loader_init(nib_bank_t *bank) {
     bank->display_name[32] = '\0';
     uint32_t region_table_offset = read_u32_le(base + 45);
     uint32_t sample_data_offset = read_u32_le(base + 49);
-    bank->adpcm_block_size = read_u16_le(base + 53);
+    bank->codec_block_size = read_u16_le(base + 53);
 
-    if (bit_depth != 16 || compression != COMPRESSION_ADPCM) {
+    if (bit_depth != 16 || (compression != NIB_COMPRESSION_ADPCM && compression != NIB_COMPRESSION_QOA)) {
         ESP_LOGE(TAG, "unsupported format: bit_depth=%u compression=%u "
-                      "(this loader only handles 16-bit/IMA-ADPCM .nib files -- "
+                      "(this loader only handles 16-bit ADPCM or QOA .nib files -- "
                       "was this built with an old sfz_to_nib.py?)", bit_depth, compression);
         return false;
     }
-    if (bank->adpcm_block_size < 5) {
-        ESP_LOGE(TAG, "bad adpcm_block_size %u in .nib header", bank->adpcm_block_size);
-        return false;
+    bank->compression = (nib_compression_t) compression;
+
+    if (bank->compression == NIB_COMPRESSION_ADPCM) {
+        if (bank->codec_block_size < 5) {
+            ESP_LOGE(TAG, "bad ADPCM block size %u in .nib header", bank->codec_block_size);
+            return false;
+        }
+        // Standard IMA ADPCM, mono: 4-byte header (int16 predictor, uint8
+        // step index, uint8 reserved) stores the first sample directly,
+        // then every remaining byte packs 2 nibble-encoded samples.
+        bank->codec_samples_per_unit = 1 + (bank->codec_block_size - 4) * 2;
+    } else {
+        if (bank->codec_block_size <= QOA_FRAME_HEADER_AND_LMS_BYTES) {
+            ESP_LOGE(TAG, "bad QOA frame size %u in .nib header", bank->codec_block_size);
+            return false;
+        }
+        // Inverts sfz_to_nib.py's qoa_frame_size_bytes(): frame_size =
+        // 40 + (samples/20)*16, stereo, LMS_LEN=4 fixed by the QOA spec.
+        uint32_t num_slices = (bank->codec_block_size - QOA_FRAME_HEADER_AND_LMS_BYTES) / QOA_SLICE_BYTES_STEREO;
+        bank->codec_samples_per_unit = (uint16_t) (num_slices * 20);
     }
-    // Standard IMA ADPCM, mono: 4-byte header (int16 predictor, uint8
-    // step index, uint8 reserved) stores the first sample directly, then
-    // every remaining byte packs 2 nibble-encoded samples.
-    bank->adpcm_samples_per_block = 1 + (bank->adpcm_block_size - 4) * 2;
 
     // Parsed into a proper heap array rather than left as raw mmap'd
     // bytes -- see the alignment note above. This is small (33 bytes x a
@@ -106,14 +129,22 @@ bool nib_loader_init(nib_bank_t *bank) {
         region->sample_length = read_u32_le(r + 21);
         region->loop_start = read_u32_le(r + 25);
         region->loop_end = read_u32_le(r + 29);
+        region->qoa_raw_prefix_samples = read_u32_le(r + 33);
         region->left_data = base + sample_data_offset + left_offset;
-        region->right_data = base + sample_data_offset + right_offset;
+        // QOA regions store right_length=0/right_offset=0 in the file --
+        // explicitly NULL the pointer here rather than leave it pointing
+        // at sample_data_offset+0 (a real, if unused, address) so any
+        // accidental use is a crash, not a silent wrong-data bug.
+        region->right_data = (bank->compression == NIB_COMPRESSION_ADPCM)
+                                  ? base + sample_data_offset + right_offset
+                                  : NULL;
     }
 
-    ESP_LOGI(TAG, "loaded '%s': %u regions, %luHz, %u ch, IMA ADPCM (%u B/block), "
+    ESP_LOGI(TAG, "loaded '%s': %u regions, %luHz, %u ch, %s (%u B/%s), "
                   "mmap'd directly from flash -- no boot-time decode",
              bank->display_name, bank->region_count, (unsigned long) bank->sample_rate,
-             bank->channels, bank->adpcm_block_size);
+             bank->channels, bank->compression == NIB_COMPRESSION_ADPCM ? "IMA ADPCM" : "QOA (experimental)",
+             bank->codec_block_size, bank->compression == NIB_COMPRESSION_ADPCM ? "block" : "frame");
     return true;
 }
 

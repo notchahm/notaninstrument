@@ -1,5 +1,7 @@
 #include "adpcm_decode.h"
 
+#include <stddef.h>
+
 // Standard IMA ADPCM tables -- copied verbatim from the vendored
 // tools/sfz_preprocessor/adpcm-xq/adpcm-lib.c so this decoder is
 // bit-exact with what encoded the data.
