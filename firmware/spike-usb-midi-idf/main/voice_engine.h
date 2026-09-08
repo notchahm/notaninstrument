@@ -23,8 +23,12 @@ bool voice_engine_init(void);
 // allocation decision. Safe to leave off in normal use.
 void voice_engine_start_diag_task(void);
 
-void voice_engine_note_on(uint8_t note, uint8_t velocity);
-void voice_engine_note_off(uint8_t note);
+// channel is the raw 0-15 MIDI channel (status byte's low nibble) --
+// channel 9 (human-numbered channel 10, the GM percussion convention)
+// routes to the built-in drum kit; every other channel plays piano. See
+// voice_engine.c's DRUM_MIDI_CHANNEL.
+void voice_engine_note_on(uint8_t channel, uint8_t note, uint8_t velocity);
+void voice_engine_note_off(uint8_t channel, uint8_t note);
 
 // Renders frame_count stereo frames (interleaved int16, L/R) into out,
 // mixing every active voice -- this IS the "mixer sums active voices per

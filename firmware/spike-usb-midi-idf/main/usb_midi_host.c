@@ -107,7 +107,17 @@ static void midi_transfer_cb(usb_transfer_t *transfer) {
     // matters).
     esp_err_t err = usb_host_transfer_submit(transfer);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "resubmit failed: %s", esp_err_to_name(err));
+        // Confirmed on real hardware (a hub-instability hot-swap): this
+        // can fail with ESP_ERR_INVALID_STATE once the underlying device
+        // handle has gone stale, at which point it will never succeed
+        // again on this transfer -- free it rather than leak it. The
+        // eventual USB_HOST_CLIENT_EVENT_DEV_GONE callback (handled in
+        // handle_device's ACTION_CLOSE_DEV) cleans up the device itself;
+        // a fresh USB_HOST_CLIENT_EVENT_NEW_DEV on reconnect starts a
+        // brand new transfer via midi_try_claim(), so there's nothing
+        // else to resume here.
+        ESP_LOGW(TAG, "resubmit failed: %s -- dropping this transfer", esp_err_to_name(err));
+        usb_host_transfer_free(transfer);
     }
 }
 
@@ -211,6 +221,19 @@ static void client_event_cb(const usb_host_client_event_msg_t *event_msg, void *
     xSemaphoreTake(s_mux_lock, portMAX_DELAY);
     switch (event_msg->event) {
     case USB_HOST_CLIENT_EVENT_NEW_DEV:
+        // Defensive bounds check -- USB device addresses go up to 127 by
+        // spec, well past DEV_MAX_COUNT, and repeated hot-plug cycling
+        // (confirmed happening on real hardware with an unstable hub --
+        // see External Hubs support note in usb_midi_host_start()) is
+        // exactly the kind of scenario that could climb past whatever
+        // address range "normal" single-session use stays within.
+        // Silently dropping a device we have no slot for beats an
+        // out-of-bounds write.
+        if (event_msg->new_dev.address >= DEV_MAX_COUNT) {
+            ESP_LOGW(TAG, "new device at address %d exceeds DEV_MAX_COUNT=%d -- ignoring",
+                     event_msg->new_dev.address, DEV_MAX_COUNT);
+            break;
+        }
         s_devices[event_msg->new_dev.address].dev_addr = event_msg->new_dev.address;
         s_devices[event_msg->new_dev.address].dev_hdl = NULL;
         s_devices[event_msg->new_dev.address].actions |= ACTION_OPEN_DEV;
@@ -231,28 +254,63 @@ static void client_event_cb(const usb_host_client_event_msg_t *event_msg, void *
     xSemaphoreGive(s_mux_lock);
 }
 
+// Every one of these USB device lifecycle calls used to be wrapped in
+// ESP_ERROR_CHECK -- appropriate for a call that "should never fail"
+// during stable operation, but wrong here: a USB device can legitimately
+// disappear (unplugged, a hub resetting/losing power, a bus error)
+// between any two of these steps, and any of the four calls below can
+// then fail with a real, expected error rather than a programming bug.
+// Confirmed on real hardware: hot-swapping a MIDI controller onto a USB
+// hub mid-session made usb_host_device_close() return
+// ESP_ERR_INVALID_STATE (the device handle had already gone stale from
+// the hub's own instability -- see External Hubs support note in
+// usb_midi_host_start()), and ESP_ERROR_CHECK on that aborted the entire
+// firmware -- killing piano and drum playback too, not just the USB
+// connection. Logging and bailing out of *this device's* handling for
+// this cycle, rather than aborting the whole system, is what a class
+// driver actually needs to tolerate normal hot-plug/hot-unplug.
 static void handle_device(usb_device_t *device) {
     uint8_t actions = device->actions;
     device->actions = 0;
 
     if (actions & ACTION_OPEN_DEV) {
         ESP_LOGI(TAG, "Opening device at address %d", device->dev_addr);
-        ESP_ERROR_CHECK(usb_host_device_open(device->client_hdl, device->dev_addr, &device->dev_hdl));
+        esp_err_t err = usb_host_device_open(device->client_hdl, device->dev_addr, &device->dev_hdl);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "device_open failed for address %d: %s -- device likely already gone",
+                     device->dev_addr, esp_err_to_name(err));
+            return;
+        }
         actions |= ACTION_GET_DEV_DESC;
     }
     if (actions & ACTION_GET_DEV_DESC) {
         const usb_device_desc_t *dev_desc;
-        ESP_ERROR_CHECK(usb_host_get_device_descriptor(device->dev_hdl, &dev_desc));
+        esp_err_t err = usb_host_get_device_descriptor(device->dev_hdl, &dev_desc);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "get_device_descriptor failed for address %d: %s",
+                     device->dev_addr, esp_err_to_name(err));
+            return;
+        }
         ESP_LOGI(TAG, "Device VID:PID %04x:%04x", dev_desc->idVendor, dev_desc->idProduct);
         actions |= ACTION_GET_CONFIG_DESC;
     }
     if (actions & ACTION_GET_CONFIG_DESC) {
         const usb_config_desc_t *config_desc;
-        ESP_ERROR_CHECK(usb_host_get_active_config_descriptor(device->dev_hdl, &config_desc));
+        esp_err_t err = usb_host_get_active_config_descriptor(device->dev_hdl, &config_desc);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "get_active_config_descriptor failed for address %d: %s",
+                     device->dev_addr, esp_err_to_name(err));
+            return;
+        }
         midi_try_claim(device->client_hdl, device->dev_hdl, config_desc);
     }
     if (actions & ACTION_CLOSE_DEV) {
-        ESP_ERROR_CHECK(usb_host_device_close(device->client_hdl, device->dev_hdl));
+        esp_err_t err = usb_host_device_close(device->client_hdl, device->dev_hdl);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "device_close failed for address %d: %s -- device already gone, "
+                          "clearing our own bookkeeping anyway",
+                     device->dev_addr, esp_err_to_name(err));
+        }
         device->dev_hdl = NULL;
         device->dev_addr = 0;
     }

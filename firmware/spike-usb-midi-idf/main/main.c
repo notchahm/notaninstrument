@@ -218,12 +218,12 @@ void usb_midi_on_event(uint8_t status, uint8_t data1, uint8_t data2) {
     uint8_t channel = status & 0x0F;
     display_event_t evt = {.channel = channel, .data1 = data1, .data2 = data2};
     if (message == 0x90 && data2 > 0) {
-        voice_engine_note_on(data1, data2);
+        voice_engine_note_on(channel, data1, data2);
         evt.is_cc = false;
         evt.note_on = true;
         xQueueSend(s_display_queue, &evt, 0); // non-blocking; drop on a full queue, display is cosmetic
     } else if (message == 0x80 || (message == 0x90 && data2 == 0)) {
-        voice_engine_note_off(data1);
+        voice_engine_note_off(channel, data1);
         evt.is_cc = false;
         evt.note_on = false;
         xQueueSend(s_display_queue, &evt, 0);

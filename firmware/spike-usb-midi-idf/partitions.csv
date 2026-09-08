@@ -1,8 +1,19 @@
 # Custom partition table (docs/multi-instrument-soundbanks.md: "Built-in
-# ROM default" -- a soundbank stored in flash, not embedded in the app
-# binary, so it survives independent re-flashing of firmware vs. content).
+# ROM default" -- soundbanks stored in flash, not embedded in the app
+# binary, so they survive independent re-flashing of firmware vs. content).
+#
+# factory shrunk from 0x180000 (1.5MB) to 0x100000 (1MB) -- the actual
+# firmware binary is ~350KB, still ~650KB headroom -- and soundbank from
+# 0xE00000 (14.68MB) to 0xC80000 (12.5MB) -- piano's actual content is
+# ~11.4MB, still ~1.1MB headroom for its own growth -- freeing 0x200000
+# (2MB) for the new drumkit partition (second built-in instrument,
+# channel-routed -- see voice_engine.c's DRUM_MIDI_CHANNEL) with zero
+# quality/content impact on either existing partition's actual data,
+# just less unused padding around each.
+#
 # Name,      Type, SubType, Offset,   Size,      Flags
 nvs,         data, nvs,     0x9000,   0x6000,
 phy_init,    data, phy,     0xF000,   0x1000,
-factory,     app,  factory, 0x10000,  0x180000,
-soundbank,   data, 0x40,    0x190000, 0xE00000,
+factory,     app,  factory, 0x10000,  0x100000,
+drumkit,     data, 0x40,    0x110000, 0x200000,
+soundbank,   data, 0x40,    0x310000, 0xC80000,

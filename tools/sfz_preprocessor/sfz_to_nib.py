@@ -630,7 +630,12 @@ def trim_and_loop(audio_i16, target_rate, attack_seconds, loop_seconds, crossfad
     # now phase-matched by the search above, this only has to smooth a
     # small residual mismatch rather than paper over an arbitrary one.
     crossfade_len = int(crossfade_ms / 1000 * target_rate)
-    crossfade_len = min(crossfade_len, loop.shape[0] // 4)
+    # Widened from //4 to //3 of the loop length after real-hardware
+    # feedback asking for wider cross-fading -- the old cap (~125ms at
+    # this bank's 0.5s loop-seconds) left the previous 100ms default
+    # crossfade-ms right up against its ceiling with no real headroom
+    # to widen further.
+    crossfade_len = min(crossfade_len, loop.shape[0] // 3)
     if crossfade_len > 0:
         # Smoothstep (3t^2 - 2t^3), not a plain linear ramp -- a linear
         # fade's weighting has a slope *discontinuity* right at the
@@ -881,10 +886,11 @@ def main():
     # blur into a smooth drone the way a true few-ms micro-loop would.
     # 0.5s moves well clear of that zone (~2Hz repetition, not perceived
     # as a distinct event). crossfade-ms scaled back up to match
-    # (trim_and_loop still caps it at loop_len//4 regardless).
+    # (trim_and_loop caps it at loop_len//3 regardless -- widened from
+    # //4 after real-hardware feedback asking for wider cross-fading).
     parser.add_argument("--attack-seconds", type=float, default=3.0)
     parser.add_argument("--loop-seconds", type=float, default=0.5)
-    parser.add_argument("--crossfade-ms", type=float, default=100.0)
+    parser.add_argument("--crossfade-ms", type=float, default=150.0)
     # Extra headroom below the loop's own measured end level -- see
     # level_loop_amplitude's docstring. Doesn't change the *relative*
     # size of the small residual wobble a sliding-RMS-window level
@@ -900,10 +906,12 @@ def main():
     # flat value for every region: confirmed on real hardware that a
     # flat value strong enough to help a soft note's loop sounded
     # artificially dulled/quiet on a hard-hit one.
-    parser.add_argument("--loop-extra-decay-db-soft", type=float, default=2.5,
-                         help="Extra dB of headroom for the softest (velocity 1) regions (0 disables). Default 2.5.")
-    parser.add_argument("--loop-extra-decay-db-hard", type=float, default=0.5,
-                         help="Extra dB of headroom for the hardest (velocity 127) regions (0 disables). Default 0.5.")
+    # Dialed back from 2.5/0.5dB after real-hardware feedback that even
+    # the velocity-scaled version was still slightly overaggressive.
+    parser.add_argument("--loop-extra-decay-db-soft", type=float, default=1.8,
+                         help="Extra dB of headroom for the softest (velocity 1) regions (0 disables). Default 1.8.")
+    parser.add_argument("--loop-extra-decay-db-hard", type=float, default=0.3,
+                         help="Extra dB of headroom for the hardest (velocity 127) regions (0 disables). Default 0.3.")
     parser.add_argument("--sample-rate", type=int, default=32000)
     # 8 is adpcm-xq's own hard minimum (n=8..15) -- the smallest block
     # available, and worth using now that loop-seconds is short (~100ms):

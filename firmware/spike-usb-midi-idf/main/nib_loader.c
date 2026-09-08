@@ -37,13 +37,13 @@ static uint16_t read_u16_le(const uint8_t *p) {
     return (uint16_t) p[0] | ((uint16_t) p[1] << 8);
 }
 
-bool nib_loader_init(nib_bank_t *bank) {
+bool nib_loader_init(nib_bank_t *bank, const char *partition_name) {
     memset(bank, 0, sizeof(*bank));
 
     const esp_partition_t *partition = esp_partition_find_first(
-        ESP_PARTITION_TYPE_DATA, 0x40, "soundbank");
+        ESP_PARTITION_TYPE_DATA, 0x40, partition_name);
     if (partition == NULL) {
-        ESP_LOGE(TAG, "no 'soundbank' partition found -- check partitions.csv was actually flashed");
+        ESP_LOGE(TAG, "no '%s' partition found -- check partitions.csv was actually flashed", partition_name);
         return false;
     }
 
@@ -143,7 +143,7 @@ bool nib_loader_init(nib_bank_t *bank) {
     ESP_LOGI(TAG, "loaded '%s': %u regions, %luHz, %u ch, %s (%u B/%s), "
                   "mmap'd directly from flash -- no boot-time decode",
              bank->display_name, bank->region_count, (unsigned long) bank->sample_rate,
-             bank->channels, bank->compression == NIB_COMPRESSION_ADPCM ? "IMA ADPCM" : "QOA (experimental)",
+             bank->channels, bank->compression == NIB_COMPRESSION_ADPCM ? "IMA ADPCM" : "QOA",
              bank->codec_block_size, bank->compression == NIB_COMPRESSION_ADPCM ? "block" : "frame");
     return true;
 }

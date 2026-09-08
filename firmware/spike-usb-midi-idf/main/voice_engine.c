@@ -36,8 +36,12 @@ static const char *TAG = "voice_engine";
 // across many loop repeats, and 6s/1.5s was too fast for that on its own
 // -- a real piano's sustain (pedal up, string just decaying naturally)
 // commonly runs into the 10-20s range depending on register.
+//
+// HARD end lengthened again (6.0->9.0s) after real-hardware feedback
+// that hard-hit notes still decayed a little too fast while soft notes
+// (18.0s) were fine as-is -- SOFT unchanged.
 #define HELD_DECAY_SECONDS_SOFT 18.0f // velocity 1 (softest)
-#define HELD_DECAY_SECONDS_HARD 6.0f  // velocity 127 (hardest)
+#define HELD_DECAY_SECONDS_HARD 9.0f  // velocity 127 (hardest)
 
 // Fixed-point throughout the hot per-sample path (phase accumulation,
 // interpolation, envelope, mix scaling, and the ADPCM/QOA decode itself --
@@ -87,7 +91,9 @@ typedef enum {
 
 typedef struct {
     voice_state_t state;
+    const nib_bank_t *bank;    // which instrument this voice is playing from (piano, drums, ...)
     const nib_region_t *region;
+    uint8_t channel;           // raw 0-15 MIDI channel (see DRUM_MIDI_CHANNEL) -- note-off must match this too
     uint8_t note;
     uint32_t phase;             // Q20.12 frame position into the region's sample data
     uint32_t phase_inc;         // Q20.12 frames advanced per output frame
@@ -107,10 +113,10 @@ typedef struct {
     // voice->phase currently points at, and advance_voice resets it to
     // loop_start (an O(1) jump to that block/frame's own header) on a
     // loop wrap. Which union member is live is determined by
-    // s_bank.compression, checked once per call in the few functions
-    // below that touch it -- only one bank is ever loaded at a time, so
-    // this is a single, branch-predictor-friendly check, not a per-voice
-    // property.
+    // voice->bank->compression -- genuinely a per-voice property since
+    // multiple banks (piano, drums, ...) can be loaded and playing
+    // simultaneously (see DRUM_MIDI_CHANNEL); each voice's own bank
+    // pointer, set once at note-on, says which.
     union {
         struct { adpcm_stream_t left, right; } adpcm;
         qoa_stream_t qoa;
@@ -129,8 +135,16 @@ typedef struct {
     uint32_t age;               // monotonically increasing at note-on, for oldest-first voice stealing
 } voice_t;
 
-static nib_bank_t s_bank;
-static bool s_bank_loaded = false;
+// Raw 0-15 MIDI channel value (wire-protocol nibble, not the 1-16
+// human-numbered display main.c uses for the OLED) that routes to the
+// drum kit instead of piano -- channel 10 in human numbering, the GM
+// percussion convention.
+#define DRUM_MIDI_CHANNEL 9
+
+static nib_bank_t s_bank_piano;
+static nib_bank_t s_bank_drums;
+static bool s_bank_piano_loaded = false;
+static bool s_bank_drums_loaded = false;
 static voice_t s_voices[MAX_POLYPHONY];
 static uint32_t s_voice_age_counter = 0;
 
@@ -258,18 +272,32 @@ static inline const uint8_t *qoa_compressed_data(const nib_region_t *region) {
 
 bool voice_engine_init(void) {
     memset(s_voices, 0, sizeof(s_voices));
-    s_bank_loaded = nib_loader_init(&s_bank);
-    if (!s_bank_loaded) {
-        ESP_LOGE(TAG, "no soundbank loaded -- notes will be silent until one is flashed");
+    s_bank_piano_loaded = nib_loader_init(&s_bank_piano, "soundbank");
+    if (!s_bank_piano_loaded) {
+        ESP_LOGE(TAG, "no piano soundbank loaded -- notes will be silent until one is flashed");
     }
-    return s_bank_loaded;
+    // Drum kit is optional -- a piano-only build (no "drumkit" partition
+    // flashed) should still work normally on every non-drum channel, not
+    // fail voice_engine_init() outright, so this doesn't affect the
+    // overall return value.
+    s_bank_drums_loaded = nib_loader_init(&s_bank_drums, "drumkit");
+    if (!s_bank_drums_loaded) {
+        ESP_LOGW(TAG, "no drum kit loaded -- channel %d will be silent until one is flashed",
+                 DRUM_MIDI_CHANNEL + 1);
+    }
+    return s_bank_piano_loaded;
 }
 
-void voice_engine_note_on(uint8_t note, uint8_t velocity) {
-    if (!s_bank_loaded || velocity == 0) {
+void voice_engine_note_on(uint8_t channel, uint8_t note, uint8_t velocity) {
+    if (velocity == 0) {
         return;
     }
-    const nib_region_t *region = nib_find_region(&s_bank, note, velocity);
+    bool is_drum = (channel == DRUM_MIDI_CHANNEL);
+    const nib_bank_t *bank = is_drum ? &s_bank_drums : &s_bank_piano;
+    if (is_drum ? !s_bank_drums_loaded : !s_bank_piano_loaded) {
+        return;
+    }
+    const nib_region_t *region = nib_find_region(bank, note, velocity);
     if (region == NULL) {
         voice_diag_record(note, velocity, -1, -1);
         return; // key outside every region's range -- nothing to play
@@ -278,7 +306,7 @@ void voice_engine_note_on(uint8_t note, uint8_t velocity) {
     // One-time per-note setup -- float is fine here, this always runs in
     // task context (usb_midi_host.c), never in the ISR.
     float semitones = (float) note - (float) region->root_key;
-    float ratio = powf(2.0f, semitones / 12.0f) * ((float) s_bank.sample_rate / (float) OUTPUT_SAMPLE_RATE);
+    float ratio = powf(2.0f, semitones / 12.0f) * ((float) bank->sample_rate / (float) OUTPUT_SAMPLE_RATE);
     uint32_t phase_inc = (uint32_t) (ratio * (float) PHASE_ONE + 0.5f);
 
     float velocity_frac = (float) (velocity - 1) / 126.0f; // 0.0 (softest) .. 1.0 (hardest)
@@ -291,21 +319,21 @@ void voice_engine_note_on(uint8_t note, uint8_t velocity) {
     bool has_loop = region->loop_end > region->loop_start;
     int16_t loop_sample_left = 0, loop_sample_right = 0;
     if (has_loop) {
-        if (s_bank.compression == NIB_COMPRESSION_ADPCM) {
-            loop_sample_left = adpcm_block_header_sample(region->left_data, s_bank.codec_block_size,
-                                                           s_bank.codec_samples_per_unit, region->loop_start);
-            loop_sample_right = adpcm_block_header_sample(region->right_data, s_bank.codec_block_size,
-                                                            s_bank.codec_samples_per_unit, region->loop_start);
+        if (bank->compression == NIB_COMPRESSION_ADPCM) {
+            loop_sample_left = adpcm_block_header_sample(region->left_data, bank->codec_block_size,
+                                                           bank->codec_samples_per_unit, region->loop_start);
+            loop_sample_right = adpcm_block_header_sample(region->right_data, bank->codec_block_size,
+                                                            bank->codec_samples_per_unit, region->loop_start);
         } else {
             // loop_start is always well past the raw-PCM prefix (it's
             // deep in the sustain), so it's always addressable in
             // QOA-relative terms -- see qoa_compressed_data() above.
             uint32_t qoa_loop_start = region->loop_start - region->qoa_raw_prefix_samples;
             const uint8_t *qoa_data = qoa_compressed_data(region);
-            loop_sample_left = qoa_frame_first_sample(qoa_data, s_bank.codec_block_size,
-                                                        s_bank.codec_samples_per_unit, qoa_loop_start, 0);
-            loop_sample_right = qoa_frame_first_sample(qoa_data, s_bank.codec_block_size,
-                                                         s_bank.codec_samples_per_unit, qoa_loop_start, 1);
+            loop_sample_left = qoa_frame_first_sample(qoa_data, bank->codec_block_size,
+                                                        bank->codec_samples_per_unit, qoa_loop_start, 0);
+            loop_sample_right = qoa_frame_first_sample(qoa_data, bank->codec_block_size,
+                                                         bank->codec_samples_per_unit, qoa_loop_start, 1);
         }
     }
 
@@ -319,18 +347,20 @@ void voice_engine_note_on(uint8_t note, uint8_t velocity) {
     voice_t *voice = find_voice_to_use();
     int8_t slot = (int8_t) (voice - s_voices);
     voice->state = VOICE_HELD;
+    voice->bank = bank;
     voice->region = region;
+    voice->channel = channel;
     voice->note = note;
     voice->phase = 0;
     voice->phase_inc = phase_inc;
     voice->loop_start_fixed = region->loop_start << PHASE_FRAC_BITS;
     voice->loop_end_fixed = region->loop_end << PHASE_FRAC_BITS;
     voice->sample_length_fixed = region->sample_length << PHASE_FRAC_BITS;
-    if (s_bank.compression == NIB_COMPRESSION_ADPCM) {
+    if (bank->compression == NIB_COMPRESSION_ADPCM) {
         adpcm_stream_reset(&voice->codec.adpcm.left, region->left_data,
-                            s_bank.codec_block_size, s_bank.codec_samples_per_unit, 0);
+                            bank->codec_block_size, bank->codec_samples_per_unit, 0);
         adpcm_stream_reset(&voice->codec.adpcm.right, region->right_data,
-                            s_bank.codec_block_size, s_bank.codec_samples_per_unit, 0);
+                            bank->codec_block_size, bank->codec_samples_per_unit, 0);
     } else {
         // The QOA stream itself only ever addresses the compressed
         // portion (past the raw-PCM prefix) -- read_voice_frame handles
@@ -340,7 +370,7 @@ void voice_engine_note_on(uint8_t note, uint8_t velocity) {
         // moment read_voice_frame needs the prefix/QOA boundary sample --
         // see the comment there.
         qoa_stream_reset(&voice->codec.qoa, qoa_compressed_data(region),
-                          s_bank.codec_block_size, s_bank.codec_samples_per_unit, 0);
+                          bank->codec_block_size, bank->codec_samples_per_unit, 0);
     }
     voice->loop_start_sample_left = loop_sample_left;
     voice->loop_start_sample_right = loop_sample_right;
@@ -352,7 +382,7 @@ void voice_engine_note_on(uint8_t note, uint8_t velocity) {
     voice_diag_record(note, velocity, slot, active_before);
 }
 
-void voice_engine_note_off(uint8_t note) {
+void voice_engine_note_off(uint8_t channel, uint8_t note) {
     uint32_t release_rate = (uint32_t) ((double) ENVELOPE_MAX / (RELEASE_SECONDS * OUTPUT_SAMPLE_RATE) + 0.5);
     if (release_rate < 1) {
         release_rate = 1;
@@ -361,7 +391,11 @@ void voice_engine_note_off(uint8_t note) {
     portENTER_CRITICAL(&s_voice_lock);
     int8_t matched = 0;
     for (int i = 0; i < MAX_POLYPHONY; i++) {
-        if (s_voices[i].state == VOICE_HELD && s_voices[i].note == note) {
+        // Must match channel too, not just note -- piano and drums can
+        // have voices sharing the same note number on different
+        // channels (the shared pool has no other way to tell them
+        // apart), and a note-off on one must never stop the other's.
+        if (s_voices[i].state == VOICE_HELD && s_voices[i].note == note && s_voices[i].channel == channel) {
             s_voices[i].state = VOICE_RELEASING;
             s_voices[i].release_rate = release_rate;
             matched++;
@@ -385,7 +419,7 @@ static inline void read_voice_frame(voice_t *voice, int32_t *left, int32_t *righ
     // for why that's safe; its result is simply never used below when
     // that happens (the loop-seam substitution takes over instead).
     int32_t l0, r0, l1_normal, r1_normal;
-    if (s_bank.compression == NIB_COMPRESSION_ADPCM) {
+    if (voice->bank->compression == NIB_COMPRESSION_ADPCM) {
         adpcm_stream_seek_forward(&voice->codec.adpcm.left, idx);
         adpcm_stream_seek_forward(&voice->codec.adpcm.right, idx);
         l0 = voice->codec.adpcm.left.decoded[0];
@@ -463,11 +497,11 @@ static inline void advance_voice(voice_t *voice) {
         // (sfz_to_nib.py). The next read_voice_frame call decodes forward
         // from there to wherever new_phase's remainder actually lands,
         // same as it would for any other frame.
-        if (s_bank.compression == NIB_COMPRESSION_ADPCM) {
+        if (voice->bank->compression == NIB_COMPRESSION_ADPCM) {
             adpcm_stream_reset(&voice->codec.adpcm.left, voice->region->left_data,
-                                s_bank.codec_block_size, s_bank.codec_samples_per_unit, voice->region->loop_start);
+                                voice->bank->codec_block_size, voice->bank->codec_samples_per_unit, voice->region->loop_start);
             adpcm_stream_reset(&voice->codec.adpcm.right, voice->region->right_data,
-                                s_bank.codec_block_size, s_bank.codec_samples_per_unit, voice->region->loop_start);
+                                voice->bank->codec_block_size, voice->bank->codec_samples_per_unit, voice->region->loop_start);
         } else {
             // Same QOA-relative addressing as note_on/read_voice_frame --
             // the stream only ever knows about the post-prefix span, so
@@ -482,7 +516,7 @@ static inline void advance_voice(voice_t *voice) {
             // note looping sounded like "two notes at once, distorted,
             // at high gain."
             qoa_stream_reset(&voice->codec.qoa, qoa_compressed_data(voice->region),
-                              s_bank.codec_block_size, s_bank.codec_samples_per_unit,
+                              voice->bank->codec_block_size, voice->bank->codec_samples_per_unit,
                               voice->region->loop_start - voice->region->qoa_raw_prefix_samples);
         }
     } else if (!has_loop && new_phase >= voice->sample_length_fixed) {

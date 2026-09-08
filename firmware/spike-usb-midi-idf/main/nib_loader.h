@@ -2,16 +2,19 @@
 
 // Bring-up step 5 (docs/bring-up-plan.md): loads a .nib soundbank
 // (docs/multi-instrument-soundbanks.md), produced offline by
-// tools/sfz_preprocessor/sfz_to_nib.py.
+// tools/sfz_preprocessor/sfz_to_nib.py (melodic instruments) or
+// virtuosity_to_nib.py (one-shot percussion).
 //
-// The "soundbank" flash partition (partitions.csv) is memory-mapped
-// directly (flash is XIP-mappable on the P4) and left that way -- each
-// region's audio is compressed (IMA ADPCM, the primary/shipping codec, or
-// experimentally QOA -- see NIB_COMPRESSION_* and sfz_to_nib.py's --codec
-// flag) and decoded live, per-sample, by adpcm_decode.c or qoa_decode.c
-// inside voice_engine.c's real-time render path, straight out of the
-// mapped flash bytes. No boot-time bulk decode step of any kind: this
-// loader only parses the small region table. See sfz_to_nib.py's module
+// Each named data partition (partitions.csv -- "soundbank" for the
+// built-in piano, "drumkit" for the built-in drum kit, both read via the
+// same loader, see nib_loader_init's partition_name argument) is
+// memory-mapped directly (flash is XIP-mappable on the P4) and left that
+// way -- each region's audio is compressed (QOA, the primary codec, or
+// IMA ADPCM -- see NIB_COMPRESSION_* and sfz_to_nib.py's --codec flag)
+// and decoded live, per-sample, by qoa_decode.c or adpcm_decode.c inside
+// voice_engine.c's real-time render path, straight out of the mapped
+// flash bytes. No boot-time bulk decode step of any kind: this loader
+// only parses the small region table. See sfz_to_nib.py's module
 // docstring for why not raw PCM or Ogg Vorbis (two earlier designs, each
 // abandoned for a real, hardware-confirmed reason).
 
@@ -69,11 +72,12 @@ typedef struct {
     nib_region_t *regions; // heap-allocated, parsed copy (see .c for why)
 } nib_bank_t;
 
-// Maps the "soundbank" flash partition and parses its header + region
-// table. Returns false (bank left zeroed) if the partition is missing,
-// too small, or its magic doesn't match -- callers should treat that as
-// "no default instrument available" rather than crash.
-bool nib_loader_init(nib_bank_t *bank);
+// Maps the named data partition (e.g. "soundbank", "drumkit" --
+// partitions.csv) and parses its header + region table. Returns false
+// (bank left zeroed) if the partition is missing, too small, or its
+// magic doesn't match -- callers should treat that as "no instrument
+// available in this slot" rather than crash.
+bool nib_loader_init(nib_bank_t *bank, const char *partition_name);
 
 // Finds the region covering (key, velocity), or NULL if no region
 // matches -- e.g. a key outside every region's range, which can happen

@@ -15,6 +15,16 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
 
+# External USB hub support -- off by default in the espressif__usb
+# managed component. Confirmed on real hardware this project needs it:
+# without it, the native USB Host Library can't properly manage a hub's
+# downstream port topology (power/reset/disconnect propagation), so a
+# hub hot-swapped in mid-session enumerates unreliably and can leave a
+# connected MIDI controller's device handle in a stale state (see
+# usb_midi_host.c's handle_device() for the crash that used to cause on
+# top of the instability itself).
+CONFIG_USB_HOST_HUBS_SUPPORTED=y
+
 # PSRAM is NOT enabled here: the soundbank pipeline went through two
 # PSRAM-dependent designs (raw PCM on flash, then Ogg Vorbis on flash
 # decoded to PSRAM at boot) before landing on IMA ADPCM, which decodes
