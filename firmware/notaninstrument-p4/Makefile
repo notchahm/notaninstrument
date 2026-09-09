@@ -1,81 +1,64 @@
-# Build/flash wrapper around arduino-cli for the ESP32-P4 bring-up sketch.
+# Build/flash wrapper around idf.py for the official notaninstrument
+# firmware (see README.md), built on ESP-IDF + the native USB Host Library
+# (CLAUDE.md architecture decision #4 has the full TinyUSB-vs-native
+# history).
 #
-# One-time setup:
-#   make setup          # points arduino-cli at the ESP32 board index + installs the core
+# Requires an activated ESP-IDF environment so `idf.py` is on PATH, e.g.:
+#   . $IDF_PATH/export.sh        (export.ps1 on Windows)
+#
+# One-time per clone:
+#   make set-target
 #
 # Day to day:
-#   make list-ports     # find your FTDI/UART adapter's COM/tty port
 #   make build
-#   make flash PORT=/dev/ttyUSB0      (or PORT=COM3 on Windows)
+#   make flash PORT=/dev/ttyUSB0      (PORT optional -- idf.py auto-detects if omitted)
 #   make monitor PORT=/dev/ttyUSB0
 #   make all PORT=/dev/ttyUSB0        (build + flash + monitor)
 #
-# Requires arduino-cli on PATH: https://arduino.github.io/arduino-cli/latest/installation/
+# The two built-in instrument soundbanks (docs/multi-instrument-soundbanks.md)
+# each live in their own flash partition (partitions.csv), separate from the
+# app -- flash them once with:
+#   make flash-soundbank PORT=/dev/ttyUSB0 NIB=../../tools/sfz_preprocessor/testdata/salamander_piano_qoa.nib
+#   make flash-drumkit   PORT=/dev/ttyUSB0 NIB=../../tools/sfz_preprocessor/testdata/virtuosity_drums.nib
+# Neither is overwritten by `make flash` (app-only) afterwards.
 
-SKETCH_DIR   := $(CURDIR)
-BUILD_DIR    := $(CURDIR)/build
+IDF_PY   := idf.py
+PORT     ?=
+PORT_ARG := $(if $(strip $(PORT)),-p $(PORT),)
+# Must match partitions.csv's "soundbank"/"drumkit" row offsets exactly.
+SOUNDBANK_OFFSET := 0x310000
+DRUMKIT_OFFSET   := 0x110000
+NIB              ?=
 
-# Board core + FQBN, confirmed against arduino-esp32 core 3.3.11 via
-# `arduino-cli board details -b esp32:esp32:esp32p4`. PSRAM defaults to
-# disabled on this board definition -- must be enabled explicitly or the
-# bring-up sketch's PSRAM check will always report "not detected" even
-# though the board has it. FlashSize matches the board's actual 16MB flash
-# (default is 4MB). ChipVariant defaults to "Before v3.00" (prev3) but the
-# real board flashed 2026-09-06 reported "Chip type: ESP32-P4 (revision
-# v3.1)" -- the prev3 default caused an immediate CHIP_LP_WDT_RESET boot
-# loop (confirmed via raw serial capture: ROM bootloader repeating every
-# ~1s, app code never reached) that ChipVariant=postv3 fixed.
-FQBN         := esp32:esp32:esp32p4:PSRAM=enabled,FlashSize=16M,ChipVariant=postv3
-
-ESP32_CORE_URL := https://espressif.github.io/arduino-esp32/package_esp32_index.json
-
-# Serial port of the FTDI/UART adapter (or the board's onboard UART bridge).
-# Must be passed explicitly -- there's no safe default across machines.
-PORT         ?=
-
-UPLOAD_BAUD  ?= 460800
-MONITOR_BAUD ?= 115200
-
-ARDUINO_CLI  := arduino-cli
-
-.PHONY: all setup list-ports build flash monitor clean check-port
+.PHONY: all set-target build flash flash-soundbank flash-drumkit monitor menuconfig clean fullclean
 
 all: build flash monitor
 
-# Registers the ESP32 board index and installs the esp32 core. Modifies the
-# arduino-cli global config (~/.arduino15/arduino-cli.yaml) -- run this
-# manually once per machine, not as part of every build.
-setup:
-	$(ARDUINO_CLI) config init --overwrite=false || true
-	$(ARDUINO_CLI) config add board_manager.additional_urls $(ESP32_CORE_URL)
-	$(ARDUINO_CLI) core update-index
-	$(ARDUINO_CLI) core install esp32:esp32
-	$(ARDUINO_CLI) lib install "Adafruit SSD1306" "Adafruit GFX Library"
-
-list-ports:
-	$(ARDUINO_CLI) board list
-
-check-port:
-ifeq ($(strip $(PORT)),)
-	$(error PORT is not set. Run 'make list-ports' to find it, then pass PORT=/dev/ttyUSB0 (or PORT=COM3 on Windows))
-endif
+set-target:
+	$(IDF_PY) set-target esp32p4
 
 build:
-	$(ARDUINO_CLI) compile \
-		--fqbn $(FQBN) \
-		--build-path $(BUILD_DIR) \
-		$(SKETCH_DIR)
+	$(IDF_PY) build
 
-flash: check-port
-	$(ARDUINO_CLI) upload \
-		--fqbn $(FQBN) \
-		--port $(PORT) \
-		--input-dir $(BUILD_DIR) \
-		--upload-property upload.speed=$(UPLOAD_BAUD) \
-		$(SKETCH_DIR)
+flash:
+	$(IDF_PY) $(PORT_ARG) flash
 
-monitor: check-port
-	$(ARDUINO_CLI) monitor --port $(PORT) --config baudrate=$(MONITOR_BAUD)
+flash-soundbank:
+	@if [ -z "$(NIB)" ]; then echo "Usage: make flash-soundbank NIB=path/to/file.nib [PORT=...]"; exit 1; fi
+	esptool.py --chip esp32p4 $(PORT_ARG) write-flash $(SOUNDBANK_OFFSET) $(NIB)
+
+flash-drumkit:
+	@if [ -z "$(NIB)" ]; then echo "Usage: make flash-drumkit NIB=path/to/file.nib [PORT=...]"; exit 1; fi
+	esptool.py --chip esp32p4 $(PORT_ARG) write-flash $(DRUMKIT_OFFSET) $(NIB)
+
+monitor:
+	$(IDF_PY) $(PORT_ARG) monitor
+
+menuconfig:
+	$(IDF_PY) menuconfig
 
 clean:
-	rm -rf $(BUILD_DIR)
+	$(IDF_PY) clean
+
+fullclean:
+	$(IDF_PY) fullclean

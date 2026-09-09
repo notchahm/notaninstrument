@@ -1,7 +1,7 @@
 #pragma once
 
 // Same decoupled timing-diagnostic design as
-// spike-usb-midi-idf/main/timing_diag.h, copied here (not shared -- these
+// notaninstrument-p4/main/timing_diag.h, copied here (not shared -- these
 // are two separate ESP-IDF projects) so the ~242ms chord-onset-lag
 // investigation can be repeated against ESP-IDF's native USB Host Library
 // (usb/usb_host.h) instead of TinyUSB, to check whether the lag is a

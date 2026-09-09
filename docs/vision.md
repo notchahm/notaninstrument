@@ -177,7 +177,7 @@ real hardware, 2026-09-06.**
   zero code changes, ruling out anything specific to the AKAI's own
   descriptor layout as the explanation.
 - **Net result: both paths work on real hardware, on the correct port.**
-  TinyUSB (`firmware/spike-usb-midi-idf/`) is the recommended path going
+  TinyUSB (`firmware/notaninstrument-p4/`) is the recommended path going
   forward — its `midi_host.c` gives ready-made USB-MIDI event-packet
   parsing for free, where the native USB Host Library path
   (`firmware/spike-usb-host-native/`, kept as a proven fallback) only
@@ -198,7 +198,7 @@ real hardware, 2026-09-06.**
 
 ## What's next
 
-1. `firmware/spike-usb-midi-idf` already parses real MIDI events via
+1. `firmware/notaninstrument-p4` already parses real MIDI events via
    `tuh_midi_rx_cb`, confirmed on real hardware. Wire that into actual
    `start_note`/`stop_note` calls (CLAUDE.md architecture decisions #1-#3).
 2. Continue the bring-up plan in order from there — display, audio output,

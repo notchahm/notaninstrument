@@ -79,7 +79,7 @@ void setup() {
   initialize_audio_output();
   // start_audio_output_task();
   Serial.println("Audio: I2S/PCM5102A initialized, test tone disabled "
-                  "(see notaninstrument-p4.ino setup())");
+                  "(see bringup-arduino-p4.ino setup())");
 }
 
 void loop() {
@@ -98,7 +98,7 @@ void loop() {
   }
   if (now - last_display_demo_ms >= DISPLAY_DEMO_INTERVAL_MS) {
     last_display_demo_ms = now;
-    // No real MIDI input wired up yet (that's spike-usb-midi-idf, a
+    // No real MIDI input wired up yet (that's notaninstrument-p4, a
     // separate ESP-IDF project) -- cycle fake note data so display_note()
     // (text layout, velocity bar) is visually exercised without one.
     int channel = demo_note_index % 16;

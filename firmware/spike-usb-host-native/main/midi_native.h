@@ -3,7 +3,7 @@
 // Minimal, timing-focused USB-MIDI class driver on top of ESP-IDF's native
 // USB Host Library (usb/usb_host.h), written specifically to answer one
 // question for docs/polyphony-latency-investigation.md: is the ~242ms
-// chord-onset delay seen on the TinyUSB path (spike-usb-midi-idf) a
+// chord-onset delay seen on the TinyUSB path (notaninstrument-p4) a
 // TinyUSB-stack artifact, or does the same delay show up here too, on a
 // completely different host stack talking to the same hardware/devices?
 //

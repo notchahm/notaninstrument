@@ -1,10 +1,25 @@
 # Second instrument: drum kit — investigation + todo
 
-Status: investigated, not started. A candidate for exercising the
-multi-instrument path (`docs/multi-instrument-soundbanks.md`) once the
-Salamander piano's single-instrument polyphony (bring-up steps 6-7) is
-fully solid — matches that doc's own suggested phasing, not a change to
-it.
+Status: **DONE, shipped (2026-09-07), content later swapped
+(2026-09-08).** The scope decisions and parser-gap analysis below (single
+mic position, reduced velocity layers, core-kit-only keys, one-shot
+playback, no choke groups) are the ones that shaped this feature and still
+hold — kept here as the record of why those choices were made, not as an
+open todo. `firmware/notaninstrument-p4/main/voice_engine.c`'s channel
+routing (`DRUM_MIDI_CHANNEL`) is unchanged either way. See `CLAUDE.md`'s
+repo layout and architecture sections for the shipped implementation.
+
+**Content swap (2026-09-08)**: the actual shipped content is no longer
+virtuosity_drums (investigated below) — it's now
+[sfzinstruments/DrumGizmo.MuldjordKit](https://github.com/sfzinstruments/DrumGizmo.MuldjordKit)
+(a real Tama Superstar rock kit), built by the newer
+`tools/sfz_preprocessor/muldjordkit_to_nib.py`, using the same single-mic-
+position/reduced-layer/one-shot scope this doc originally worked out —
+applied to that library's Overhead stereo pair (its own richer per-piece
+close-mic CC-mixing dialect was out of scope for the same reasons virtuosity's
+was). See `CREDITS.md`: MuldjordKit is CC-BY 4.0 (real attribution
+required), unlike virtuosity_drums' CC0. `virtuosity_to_nib.py` remains in
+the repo as a reference/fallback, not the active builder.
 
 ## Candidate considered: sfzinstruments/virtuosity_drums
 

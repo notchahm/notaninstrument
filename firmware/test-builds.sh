@@ -2,7 +2,7 @@
 # Build verification suite: compiles every firmware target and checks the
 # result against what's expected, rather than just "did it succeed."
 #
-# notaninstrument-p4 and spike-usb-midi-idf are expected to build cleanly --
+# bringup-arduino-p4 and notaninstrument-p4 are expected to build cleanly --
 # any failure there is a real regression.
 #
 # spike-usb-midi-arduino is currently expected to FAIL, for a specific,
@@ -114,9 +114,9 @@ run_idf_target() {
   evaluate "$name" "$?" "$log" pass ""
 }
 
-run_arduino_target "notaninstrument-p4" "$FIRMWARE_DIR/notaninstrument-p4" pass ""
+run_arduino_target "bringup-arduino-p4" "$FIRMWARE_DIR/bringup-arduino-p4" pass ""
 run_arduino_target "spike-usb-midi-arduino" "$FIRMWARE_DIR/spike-usb-midi-arduino" known-fail "tuh_midi_mount_cb_t"
-run_idf_target "spike-usb-midi-idf" "$FIRMWARE_DIR/spike-usb-midi-idf"
+run_idf_target "notaninstrument-p4" "$FIRMWARE_DIR/notaninstrument-p4"
 run_idf_target "spike-usb-host-native" "$FIRMWARE_DIR/spike-usb-host-native"
 
 echo

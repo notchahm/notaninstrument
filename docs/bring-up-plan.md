@@ -11,7 +11,7 @@ confirm the board enumerates. Check serial boot log for PSRAM size reported
 as ~32MB — catch a PSRAM misconfiguration now, not after the soundbank
 loader is built against it.
 
-Confirmed via `firmware/notaninstrument-p4` flashed over the board's UART
+Confirmed via `firmware/bringup-arduino-p4` flashed over the board's UART
 port (COM5 on the Windows host, passed through to WSL2 via usbipd-win as
 `/dev/ttyACM0` -- the CH343 bridge chip enumerates as USB CDC-ACM, not the
 older vendor-driver path): `Chip model: ESP32-P4`, `Chip revision: 301`
@@ -26,7 +26,7 @@ actual silicon is revision v3.1. That mismatch caused an immediate
 second, app code never reached, confirmed via raw serial capture (`stty` +
 `cat` on the device, since `arduino-cli monitor` produced no output when
 captured non-interactively). Adding `ChipVariant=postv3` to the FQBN in
-`firmware/notaninstrument-p4/Makefile` fixed it immediately. Worth checking
+`firmware/bringup-arduino-p4/Makefile` fixed it immediately. Worth checking
 for the same `ChipVariant` mismatch before assuming any future P4 boot
 issue is something else.
 
@@ -68,14 +68,21 @@ full detail in CLAUDE.md architecture decision #4:
    were pressed on the real controller. Confirmed generalizing to a
    second, unrelated controller too (a Korg padKONTROL, different vendor
    and device topology) with zero code changes -- see
-   `firmware/spike-usb-midi-idf/README.md`.
+   `firmware/notaninstrument-p4/README.md`.
 
 **Net result: both option 2 (TinyUSB) and option 3 (native USB Host
-Library) work on real hardware, on the correct port.** Option 2 is the
-recommended path going forward -- its `midi_host.c` gives ready-made
-USB-MIDI event-packet parsing for free, where option 3 only dumps raw
-descriptors and would need a hand-written class driver to reach the same
-point.
+Library) work on real hardware, on the correct port.** At the time, option
+2 was the recommended path going forward -- its `midi_host.c` gives
+ready-made USB-MIDI event-packet parsing for free, where option 3 only
+dumped raw descriptors and would need a hand-written class driver to reach
+the same point. **Superseded (2026-09-07):** the project went with option
+3 (native USB Host Library) instead -- the chording-latency investigation
+(`docs/polyphony-latency-investigation.md`) found the ~242ms chord-onset
+gap was TinyUSB's own DWC2 host-stack behavior, and the native library
+measured 0-11ms on the same hardware. The minimal class driver option 3's
+downside warned about is now `firmware/notaninstrument-p4/main/usb_midi_host.c`;
+TinyUSB's vendored fork is kept in-tree as reference/fallback but no longer
+built.
 
 One still-relevant hardware finding, not a firmware bug: **only one of the
 board's 4 USB-A shells has ever actually worked** (confirmed 2026-09-06
@@ -112,7 +119,7 @@ physically checking the real board).
 
 **Practical resolution — multi-controller input works today anyway**:
 plug a standard external USB hub into the one port that works.
-`firmware/spike-usb-midi-idf` already has `CFG_TUH_HUB` and multi-device
+`firmware/notaninstrument-p4` already has `CFG_TUH_HUB` and multi-device
 support enabled and doesn't care whether a hub is onboard or external —
 confirmed on real hardware with 2 simultaneous MIDI controllers through
 an external hub, both mounting as distinct `tuh_midi` interfaces and
@@ -120,10 +127,12 @@ streaming independent, correctly-decoded data concurrently. This is now
 the recommended path for multi-controller input; the onboard 4-port
 oddity is no longer a blocker.
 
-**Next**: `firmware/spike-usb-midi-idf` already parses real MIDI events
-via `tuh_midi_rx_cb` -- the next real step is wiring that into actual
-`start_note`/`stop_note` calls (CLAUDE.md architecture decisions #1-#3),
-before moving on to step 3 below.
+**Next (done, 2026-09-07):** `firmware/notaninstrument-p4` now parses real
+MIDI events via the native library's bulk-transfer completion callback
+(`usb_midi_host.c`'s `midi_transfer_cb` -> `usb_midi_on_event`, replacing
+the earlier TinyUSB `tuh_midi_rx_cb`) and wires them straight into the
+voice engine's `voice_engine_note_on/off` (CLAUDE.md architecture
+decisions #1-#3) -- that's steps 6 and 7 below.
 
 ## 3. Display bring-up (SSD1306) -- DONE (2026-09-06, confirmed on real hardware)
 Wire OLED to a free I2C bus (distinct from the onboard ES8311 codec's bus, if
@@ -131,7 +140,7 @@ that's still active). Get `Adafruit_SSD1306` printing text. Use this as the
 on-device debug surface for every later phase instead of relying solely on
 serial output.
 
-Confirmed via `firmware/notaninstrument-p4` (extended, not a separate
+Confirmed via `firmware/bringup-arduino-p4` (extended, not a separate
 spike -- this is the "active P4 firmware" bring-up sketch accumulating
 across steps). Wired a GeeekPi 128x64 SSD1306 module to GPIO7 (SDA) /
 GPIO8 (SCL) / 5V / GND. An I2C bus scan (`scan_i2c_bus()`, now a permanent
@@ -153,7 +162,7 @@ display needing a moment to settle after power-up, or an incidental wire
 reseat) -- not treated as a real bug since it hasn't recurred, but worth
 a first troubleshooting step (I2C scan, not wiring) if it ever does.
 
-**Since integrated into step 2's real hardware**: `firmware/spike-usb-midi-idf`
+**Since integrated into step 2's real hardware**: `firmware/notaninstrument-p4`
 now drives this same OLED directly from live `tuh_midi_rx_cb` events (via
 the ESP-IDF-native `k0i05/esp_ssd1306` component, not the Arduino
 `Adafruit_SSD1306` used for this step's own standalone proof) -- channel,
@@ -165,7 +174,7 @@ every redraw caused visible flicker, and redrawing on every single MIDI
 message (which can arrive far faster than the I2C bus + this library's
 page-oriented text API can render) caused visible lag. Fixed by rate-limiting
 actual screen writes to 20Hz and overwriting fixed-width fields in place
-instead of clearing first -- see `firmware/spike-usb-midi-idf/README.md`.
+instead of clearing first -- see `firmware/notaninstrument-p4/README.md`.
 
 ## 4. Audio output path (PCM5102 over I2S) -- DONE (2026-09-06, confirmed on real hardware)
 Get one hard-coded test tone or short WAV playing cleanly through the DAC
@@ -173,7 +182,7 @@ before touching MIDI or SD. Proves I2S wiring, clocking, and DMA buffering in
 isolation, so later audio glitches can be localized to mixing/SD rather than
 the output chain itself.
 
-Confirmed via `firmware/notaninstrument-p4` (extended again, same pattern
+Confirmed via `firmware/bringup-arduino-p4` (extended again, same pattern
 as steps 1 and 3): a 480Hz test tone, precomputed as one exact-period
 cycle at init and replayed continuously via DMA (`i2s_channel_write` in
 its own FreeRTOS task) -- not per-sample `sin()` in a hot loop, per
@@ -221,24 +230,49 @@ schematic and confirmed **this board has no GPIO-controlled LED at all**
 the blink to GPIO22 (a plain, otherwise-unused header pin) since it was
 never wired to a real indicator anyway.
 
-## 5. Soundbank pipeline: offline tool + on-device loading
+## 5. Soundbank pipeline: offline tool + on-device loading -- DONE (2026-09-07)
 Build and test the SFZ->binary preprocessing tool on a computer first (no
 hardware needed): pick velocity layers, find/set loop points, resample,
 optionally ADPCM-encode, pack into the custom binary format with an index.
 Then on-device: mount SD over `SD_MMC`, read the bank file, load fully into
 PSRAM, log total bytes used against the offline size estimate.
 
-## 6. Single-voice integration: MIDI note triggers a real sample
+Done, with one deviation from the plan: the bank is loaded from a dedicated
+flash partition (`partitions.csv`), not SD over `SD_MMC` -- the P4's 32MB of
+PSRAM holds the whole trimmed soundbank, so a dedicated partition is simpler
+than SD streaming. The offline tool is `tools/sfz_preprocessor/sfz_to_nib.py`
+(Salamander piano SFZ -> `.nib`) and
+`tools/sfz_preprocessor/muldjordkit_to_nib.py` (DrumGizmo MuldjordKit SFZ ->
+`.nib` -- see `docs/second-instrument-drums-todo.md` for the 2026-09-08
+content swap away from the original `virtuosity_to_nib.py`/virtuosity_drums,
+kept in the repo as a reference); on-device loading is `nib_loader.c` (reads
+the partition, parses the index, samples into PSRAM).
+
+## 6. Single-voice integration: MIDI note triggers a real sample -- DONE (2026-09-07)
 Wire the proven pieces together for the simplest case: one note-on plays one
 sample from PSRAM through I2S, one note-off releases it. No polyphony, no
-envelope state machine yet — isolates "does the full chain work end to end"
+envelope state machine yet — isolates "does the full channel work end to end"
 from "does the mixer work."
 
-## 7. Voice manager: polyphony and release envelopes
+Done: a Note On triggers a real sample from PSRAM through I2S and a Note Off
+releases it, driven by the native USB MIDI path (steps 2 and the `Next` note
+above). This landed together with step 7 in `firmware/notaninstrument-p4`
+rather than as a separate single-voice milestone.
+
+## 7. Voice manager: polyphony and release envelopes -- DONE (2026-09-07)
 Build the `Voice` struct, fixed voice pool, mixer summing, and HELD/RELEASING
 envelope stages, now that every dependency (MIDI in, sample playback, I2S
 out) is independently proven. Test 2-3 note chords before pushing toward
 target polyphony.
+
+Done: `voice_engine.c` has the fixed 8-voice pool (`MAX_POLYPHONY`), per-voice
+HELD/RELEASING envelope stages, a mixer that sums active voices and scales by
+`1/sqrt(active_count)`, and voice-stealing when the pool is full. The 2-3 note
+chord test this step gates on passed cleanly on real hardware once the
+chording-latency issues were resolved -- see
+`docs/polyphony-latency-investigation.md` for the full story (the ~242ms
+TinyUSB input gap, plus the residual output-side and hot-path causes, all
+fixed).
 
 ## 8. Power and battery sizing (last, using real measurements)
 Measure actual current draw with a USB power meter under realistic load

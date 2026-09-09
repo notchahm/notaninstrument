@@ -1,11 +1,12 @@
-// Bring-up steps 2 + 3 + 4 + 5 (docs/bring-up-plan.md): USB MIDI host,
-// driving an SSD1306 OLED (via the k0i05/esp_ssd1306 component) to show
-// incoming Note On/Off events in real time, AND real polyphonic sample
-// playback through a PCM5102A (voice_engine.c + nib_loader.c, reading the
-// Salamander piano .nib built by tools/sfz_preprocessor/sfz_to_nib.py out
-// of a dedicated flash partition -- partitions.csv) -- all of MIDI input,
+// Official notaninstrument firmware entry point: USB MIDI host, driving
+// an SSD1306 OLED (via the k0i05/esp_ssd1306 component) to show incoming
+// Note On/Off events in real time, AND real polyphonic sample playback
+// through a PCM5102A (voice_engine.c + nib_loader.c, reading the piano
+// and drum kit .nib banks built by tools/sfz_preprocessor/ out of their
+// own dedicated flash partitions -- partitions.csv) -- all of MIDI input,
 // display, and actual sampled-instrument audio running as one firmware
-// image.
+// image. See ../README.md and docs/bring-up-plan.md for how this came
+// together.
 //
 // USB MIDI host is ESP-IDF's native USB Host Library (usb_midi_host.c),
 // not TinyUSB (components/tinyusb_host/, kept vendored in-tree as
@@ -30,7 +31,7 @@
 #include "voice_engine.h"
 
 // SSD1306 OLED, confirmed working wiring from docs/hardware-bom.md
-// (firmware/notaninstrument-p4's bring-up step 3): SDA=GPIO7, SCL=GPIO8.
+// (firmware/bringup-arduino-p4's bring-up step 3): SDA=GPIO7, SCL=GPIO8.
 // Shares the bus with the onboard ES8311 codec (0x18) -- no address
 // collision with the display (0x3C), confirmed via I2C scan on real
 // hardware.
@@ -237,7 +238,6 @@ void app_main(void) {
     init_display();
     voice_engine_init();
     init_audio_output();
-    voice_engine_start_diag_task();
     s_display_queue = xQueueCreate(16, sizeof(display_event_t));
     xTaskCreatePinnedToCore(display_task, "display_task", 4096, NULL, 1, NULL, 1);
     usb_midi_host_start();

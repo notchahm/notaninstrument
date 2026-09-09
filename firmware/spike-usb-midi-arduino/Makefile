@@ -1,10 +1,10 @@
 # Build/flash wrapper around arduino-cli for the USB-MIDI host spike test
 # (docs/bring-up-plan.md step 2), on the Arduino-ESP32 + Adafruit TinyUSB
-# path -- see ../spike-usb-midi-idf/ for the raw-ESP-IDF side of the same
+# path -- see ../notaninstrument-p4/ for the raw-ESP-IDF side of the same
 # comparison (CLAUDE.md architecture decision #4).
 #
 # One-time setup (also installs the ESP32 core if you haven't already via
-# ../notaninstrument-p4/Makefile):
+# ../bringup-arduino-p4/Makefile):
 #   make setup
 #
 # Day to day:
@@ -30,7 +30,7 @@ BUILD_DIR    := $(CURDIR)/build
 # defaults to "Before v3.00" (prev3), but real hardware tested 2026-09-06
 # (see docs/bring-up-plan.md step 1) is silicon revision v3.1 -- prev3
 # causes an immediate CHIP_LP_WDT_RESET boot loop on this board, confirmed
-# on ../notaninstrument-p4/. Set proactively here even though this sketch
+# on ../bringup-arduino-p4/. Set proactively here even though this sketch
 # doesn't currently compile for its own separate (Adafruit TinyUSB) reason.
 FQBN         := esp32:esp32:esp32p4:ChipVariant=postv3
 

@@ -1,14 +1,15 @@
 # Polyphony latency investigation
 
-Status: **root cause identified, 2026-09-07.** The remaining ~242ms
-chord-onset gap is TinyUSB's own host-stack behavior on this ESP32-P4
-DWC2 port, not the MIDI device, not the endpoint type, and not our audio
-render path -- confirmed by swapping in ESP-IDF's native USB Host Library
-in place of TinyUSB, on the same real hardware/controller, and seeing the
-gap collapse to 0-11ms. See "The TinyUSB-vs-native comparison test" below
-for the full result; that section supersedes the "Open question" this doc
-previously ended on. This doc exists so the next round doesn't re-discover
-the same dead ends.
+Status: **resolved, 2026-09-07.** The dominant ~242ms chord-onset gap was
+TinyUSB's own host-stack behavior on this ESP32-P4 DWC2 port (confirmed by
+the native-library comparison below: 0-11ms on the same hardware). A
+*residual* chording latency that remained after switching to the native
+USB Host Library was traced to two things still in the audio path --
+debugging + display updates in the hot path, and I2S output going through
+a queued task rather than being rendered direct to DMA -- and both are
+fixed; chording is clean now. See "Resolution" at the end for the final
+state. This doc exists so the next round doesn't re-discover the same dead
+ends.
 
 ## The symptom
 
@@ -263,29 +264,51 @@ completion*, i.e. how promptly the next transfer gets queued, was not yet
 instrumented) has not been pinned down further, since a working
 alternative now exists.
 
-## Where this leaves the project
+## Resolution (2026-09-07)
 
-Two real options, not yet decided:
+Chording is now resolved on the same real hardware/controller that
+previously showed the staggering. Three things had to be true at once, and
+all three hold in the current firmware (`firmware/notaninstrument-p4/`):
 
-1. **Switch the primary MIDI path to the native USB Host Library**
-   (`spike-usb-host-native`'s approach, now proven both for enumeration
-   *and* for MIDI event timing). Downside: `midi_native.c` above is a
-   deliberately minimal single-cable/single-endpoint MIDI parser written
-   for this test, not a general one -- multi-cable devices (the Korg
-   padKONTROL, confirmed as a real device in this project's test set) and
-   proper USB-MIDI jack/cable-number handling would need to be added,
-   whereas TinyUSB's `midi_host.c` already handles that.
-2. **Keep TinyUSB and root-cause the actual driver-level delay** (continue
-   past `channel_xfer_in_retry()` into whatever schedules the *next*
-   transfer after a successful bulk IN completion). Downside: unknown
-   effort, in vendored third-party driver code
-   (`components/tinyusb_host/src/portable/synopsys/dwc2/hcd_dwc2.c`) that
-   has already produced one wrong hypothesis (periodic-endpoint
-   scheduling) before landing here.
+**1. The primary MIDI path switched to the native USB Host Library**
+(option 1 above, now implemented in `usb_midi_host.c`). This is what
+eliminated the dominant ~242ms *input-side* gap: the native library keeps
+exactly one bulk IN transfer perpetually in flight, resubmitted from its
+own completion callback the instant it completes, so a decoded note-on
+reaches `usb_midi_on_event()` the moment the device sends it -- the 0-11ms
+the comparison test predicted. TinyUSB's vendored fork is kept in-tree
+(`components/tinyusb_host/`) as reference/fallback but is no longer built.
+The multi-cable / jack-number parsing gap that was option 1's downside is
+out of scope for now: the current parser is deliberately minimal
+(single MIDIStreaming interface, first IN endpoint), which is all the
+single-controller test set needs.
 
-Given option 1's parsing gap is bounded and well-understood (extend
-`midi_native.c` to track cable number / multiple simultaneous MIDI jacks,
-something TinyUSB's `midi_host.c` can be read as a reference for) while
-option 2's remaining unknown is open-ended and inside code this project
-doesn't own, option 1 looks like the more tractable path -- not yet acted
-on as of this doc.
+**2. Debugging and display updates were taken out of the audio hot path.**
+The note-on/off handling runs in the USB transfer-completion context.
+Debug/diagnostic logging there, and display work, delayed chord onset.
+Display is now fully decoupled: `usb_midi_on_event()` does the
+audio-critical `voice_engine_note_on/off` first, then a non-blocking
+`xQueueSend` to a low-priority display task (`main.c`), so nothing
+display-related runs in the hot path. The temporary chording diagnostics
+(a `voice_diag` ring buffer in `voice_engine.c` logging each note-on/off's
+voice allocation, and a `raw_diag` ring buffer in `usb_midi_host.c`
+timestamping every raw USB-MIDI packet, each dumped by a low-priority
+task) were used to confirm this and have since been removed.
+
+**3. I2S output is rendered direct to DMA, not through a queued task.**
+The rendered audio was being handed to a FreeRTOS task blocking on
+`i2s_channel_write()` rather than written straight into the DMA buffer, so
+a newly-triggered note's audio waited on that task being scheduled and
+issuing the write -- onset latency and jitter. It's now rendered
+direct-to-DMA: `audio_output.c`'s `on_i2s_sent` ISR callback calls
+`voice_engine_render_isr()` straight into `event->dma_buf` (the
+just-drained DMA buffer) -- the zero-copy, DMA-interrupt-driven pattern
+the fixed-point rewrite above made possible. (The fixed-point section
+recorded the ISR render as *enabled* at the time the ~242ms was measured;
+that ~242ms was the *input-side* TinyUSB gap, a different axis from this
+output-side queued-task hop -- which is why both had to be fixed for
+chording to come out clean.)
+
+With the input path on the native library, the hot path free of debug +
+display work, and I2S output rendered direct-to-DMA in the ISR, **chording
+is clean** on the same hardware that previously staggered.

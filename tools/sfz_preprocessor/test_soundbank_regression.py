@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regression test for the .nib codec pipeline's frame/block-independence
 guarantee -- the property voice_engine.c's O(1) loop-wrap relies on (see
-docs/polyphony-latency-investigation.md and firmware/spike-usb-midi-idf/
+docs/polyphony-latency-investigation.md and firmware/notaninstrument-p4/
 main/voice_engine.c's advance_voice()).
 
 Grew out of a real bug: advance_voice()'s QOA loop-wrap reset used the
@@ -38,8 +38,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 import sfz_to_nib as nib
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-FIRMWARE_MAIN = REPO_ROOT / "firmware" / "spike-usb-midi-idf" / "main"
-TEST_DIR = Path(__file__).parent.parent.parent / "firmware" / "spike-usb-midi-idf" / "test" / "voice_engine"
+FIRMWARE_MAIN = REPO_ROOT / "firmware" / "notaninstrument-p4" / "main"
+TEST_DIR = Path(__file__).parent.parent.parent / "firmware" / "notaninstrument-p4" / "test" / "voice_engine"
+USB_MIDI_TEST_DIR = Path(__file__).parent.parent.parent / "firmware" / "notaninstrument-p4" / "test" / "usb_midi_host"
+AUDIO_OUTPUT_TEST_DIR = Path(__file__).parent.parent.parent / "firmware" / "notaninstrument-p4" / "test" / "audio_output"
 
 SAMPLE_RATE = 32000
 
@@ -144,8 +146,8 @@ def build_adpcm_fixture(tmpdir):
     return block_path, block_size_bytes, samples_per_block
 
 
-def compile_test(src_name, tmpdir):
-    src = TEST_DIR / src_name
+def compile_test(src_name, tmpdir, test_dir=TEST_DIR):
+    src = test_dir / src_name
     out = Path(tmpdir) / src.stem
     subprocess.run(["gcc", "-O2", "-o", str(out), str(src), "-lm"], check=True)
     return out
@@ -196,6 +198,100 @@ def run_hybrid_loop_test(binary, fixture):
     return ok
 
 
+def run_level_loop_amplitude_swell_test():
+    """Regression test for a real swell bug in level_loop_amplitude:
+    an earlier version assumed a loop's entire natural decay between its
+    two measured endpoints follows one clean exponential curve, and
+    computed a single continuous compensating gain ramp to cancel it.
+    Real piano decay is front-loaded (fast initial decay, a flatter
+    tail) -- confirmed on real hardware that the ramp then "gives back"
+    gain on a fixed schedule regardless of what the signal is actually
+    doing, producing an audible rise right as a still-decaying-fast
+    signal meets a ramp that assumes it's already leveled off.
+
+    This calls the real level_loop_amplitude() directly (not a mirror)
+    against a synthetic worst-case signal built to have exactly that
+    shape (a sharp corner from fast decay to a flat tail, deliberately
+    more adversarial than real piano decay, which is smoother) and
+    checks the leveled result's windowed RMS envelope never rises more
+    than a small tolerance step to step.
+    """
+    rate = SAMPLE_RATE
+    n = int(0.5 * rate)
+    t = np.arange(n) / rate
+    envelope = np.concatenate([
+        np.exp(-t[:n // 4] * 30),
+        np.full(n - n // 4, np.exp(-(n // 4) / rate * 30)),
+    ])
+    tone = np.sin(2 * np.pi * 220 * t)
+    mono = (envelope * tone * 20000).astype(np.int16)
+    loop = np.stack([mono, mono], axis=1)
+
+    leveled = nib.level_loop_amplitude(loop, window_frames=int(0.05 * rate))
+
+    win = 1600  # 50ms
+    left = leveled[:, 0].astype(np.float64)
+    n_win = len(left) // win
+    windowed_rms = np.array([np.sqrt(np.mean(left[i * win:(i + 1) * win] ** 2)) for i in range(n_win)])
+    rises = np.diff(windowed_rms) / np.maximum(windowed_rms[:-1], 1.0)
+    max_rise = float(rises.max())
+
+    # The old, buggy (assumed-exponential-ramp) version overshot by far
+    # more than this on the same adversarial signal; a well-behaved
+    # pointwise correction should stay well under a 25% step-to-step
+    # rise even on this deliberately sharp-cornered worst case (real
+    # piano decay, without a hard corner, measured under 5% in practice).
+    if max_rise > 0.25:
+        print(f"FAIL: max step-to-step rise in leveled envelope is {max_rise*100:.1f}% "
+              f"(windowed RMS: {np.round(windowed_rms).astype(int)})", file=sys.stderr)
+        return False
+    print(f"PASS: max step-to-step rise in leveled envelope is {max_rise*100:.1f}% (<=25% tolerance)")
+    return True
+
+
+def run_trim_and_loop_short_recording_guard_test():
+    """Regression test for a real crash bug in trim_and_loop's "recording
+    shorter than requested" fallback: for a handful of naturally short
+    high-key recordings (confirmed on the real virtuosity_drums library
+    and on Salamander's own shortest velocity layers), the old guard
+    could compute target_loop_start >= target_loop_end after clamping to
+    the available audio length, producing an inverted/empty loop window
+    that crashed inside level_loop_amplitude's np.pad() with "can't
+    extend empty axis 0" instead of the graceful fallback its own
+    comment promised.
+
+    Calls the real trim_and_loop() directly against synthetic audio
+    shorter than attack_seconds+loop_seconds+margin would normally need,
+    and asserts it returns a valid (non-empty, loop_start < loop_end)
+    result instead of raising.
+    """
+    rate = SAMPLE_RATE
+    # ~1 second of audio -- far shorter than the 3.0+0.5+0.5 = 4.0s a
+    # normal Salamander attack_seconds/loop_seconds combination would
+    # want, matching the real short-recording scenario (e.g. Salamander's
+    # own softest A7 layer is 2.62s; some virtuosity_drums samples are
+    # shorter still).
+    n = int(1.0 * rate)
+    t = np.arange(n) / rate
+    mono = (np.sin(2 * np.pi * 220 * t) * np.exp(-t * 3) * 20000).astype(np.int16)
+    audio = np.stack([mono, mono], axis=1)
+
+    try:
+        pcm, loop_start, loop_end = nib.trim_and_loop(
+            audio, rate, attack_seconds=3.0, loop_seconds=0.5, crossfade_ms=100.0, samples_per_block=320)
+    except Exception as e:  # noqa: BLE001 -- any exception here is exactly the regression
+        print(f"FAIL: trim_and_loop raised on a short recording: {e!r}", file=sys.stderr)
+        return False
+
+    if not (0 <= loop_start < loop_end <= pcm.shape[0]):
+        print(f"FAIL: trim_and_loop returned an invalid loop window "
+              f"(loop_start={loop_start}, loop_end={loop_end}, pcm_len={pcm.shape[0]})", file=sys.stderr)
+        return False
+    print(f"PASS: short recording ({n} samples) produced a valid loop window "
+          f"(loop_start={loop_start}, loop_end={loop_end}, pcm_len={pcm.shape[0]})")
+    return True
+
+
 def main():
     ok = True
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -212,6 +308,15 @@ def main():
         hybrid_test_bin = compile_test("qoa_hybrid_voice_playback_test.c", tmpdir)
         mix_scale_test_bin = compile_test("mix_scale_smoothing_test.c", tmpdir)
         lowpass_test_bin = compile_test("output_lowpass_response_test.c", tmpdir)
+        channel_routing_test_bin = compile_test("channel_routing_test.c", tmpdir)
+        device_lifecycle_test_bin = compile_test("device_lifecycle_error_handling_test.c", tmpdir,
+                                                  test_dir=USB_MIDI_TEST_DIR)
+        hotpath_dispatch_test_bin = compile_test("hotpath_nonblocking_dispatch_test.c", tmpdir,
+                                                  test_dir=USB_MIDI_TEST_DIR)
+        immediate_resubmit_test_bin = compile_test("immediate_resubmit_test.c", tmpdir,
+                                                    test_dir=USB_MIDI_TEST_DIR)
+        direct_dma_render_test_bin = compile_test("direct_to_dma_render_test.c", tmpdir,
+                                                   test_dir=AUDIO_OUTPUT_TEST_DIR)
 
         print("\n=== QOA frame independence ===")
         ok &= run_test(qoa_test_bin, qoa_region_path, qoa_frame_size, qoa_samples_per_frame)
@@ -227,6 +332,27 @@ def main():
 
         print("\n=== Output de-hiss low-pass response (voice_engine.c mirror) ===")
         ok &= run_test(lowpass_test_bin)
+
+        print("\n=== level_loop_amplitude swell fix (real function, not a mirror) ===")
+        ok &= run_level_loop_amplitude_swell_test()
+
+        print("\n=== trim_and_loop short-recording crash guard (real function, not a mirror) ===")
+        ok &= run_trim_and_loop_short_recording_guard_test()
+
+        print("\n=== MIDI channel routing + per-channel note-off matching (voice_engine.c mirror) ===")
+        ok &= run_test(channel_routing_test_bin)
+
+        print("\n=== USB device lifecycle error handling (usb_midi_host.c mirror) ===")
+        ok &= run_test(device_lifecycle_test_bin)
+
+        print("\n=== Hot-path non-blocking display dispatch (chord latency, main.c mirror) ===")
+        ok &= run_test(hotpath_dispatch_test_bin)
+
+        print("\n=== Immediate USB transfer resubmission (chord latency, usb_midi_host.c mirror) ===")
+        ok &= run_test(immediate_resubmit_test_bin)
+
+        print("\n=== Direct-to-DMA render, no task hop (chord latency, audio_output.c mirror) ===")
+        ok &= run_test(direct_dma_render_test_bin)
 
     print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
     return 0 if ok else 1

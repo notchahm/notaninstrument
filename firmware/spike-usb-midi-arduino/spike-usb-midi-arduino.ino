@@ -3,7 +3,7 @@
 // project -- the only question this answers is whether tuh_midi_mount_cb /
 // tuh_midi_rx_cb fire when a class-compliant USB-MIDI controller is
 // plugged into the board's USB-A host port. See
-// ../spike-usb-midi-idf/main/main.c for the same test built directly on
+// ../notaninstrument-p4/main/main.c for the same test built directly on
 // ESP-IDF + TinyUSB, no Arduino involved (CLAUDE.md architecture
 // decision #4) -- both spikes implement identical tuh_midi_* callbacks so
 // the results are directly comparable.
@@ -42,7 +42,7 @@ void loop() {
   USBHost.task();
 }
 
-// --- TinyUSB host callbacks, mirrors ../spike-usb-midi-idf/main/main.c ---
+// --- TinyUSB host callbacks, mirrors ../notaninstrument-p4/main/main.c ---
 
 void tuh_mount_cb(uint8_t daddr) {
   Serial.printf("USB device mounted, address=%u\n", daddr);

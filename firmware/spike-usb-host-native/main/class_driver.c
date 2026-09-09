@@ -140,7 +140,7 @@ static void action_get_config_desc(usb_device_t *device_obj)
     // If this device has a MIDIStreaming interface, claim it and start the
     // raw-timing IN-transfer loop (see midi_native.h) -- this is the whole
     // point of this spike right now: compare chord-onset latency here
-    // against the TinyUSB path in spike-usb-midi-idf.
+    // against the TinyUSB path in notaninstrument-p4.
     midi_native_try_claim(device_obj->client_hdl, device_obj->dev_hdl, config_desc);
     // Get the device's string descriptors next
     device_obj->actions |= ACTION_GET_STR_DESC;

@@ -4,7 +4,6 @@
 #include <string.h>
 #include "adpcm_decode.h"
 #include "esp_log.h"
-#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nib_loader.h"
@@ -163,64 +162,6 @@ static const uint32_t INV_SQRT_TABLE[MAX_POLYPHONY + 1] = {
     0, 65536, 46341, 37837, 32768, 29309, 26755, 24777, 23170,
 };
 
-// TEMPORARY diagnostic (2026-09-07 chording-bug investigation): now that
-// docs/polyphony-latency-investigation.md's ~242ms USB-layer delay is
-// fixed (usb_midi_host.c, native USB Host Library), a genuinely
-// simultaneous chord reportedly still doesn't sound together while a
-// slightly staggered one does -- this records each note_on/off's voice-
-// allocation decision to find out whether that's a USB-layer symptom
-// resurfacing here or a real bug in voice allocation itself. Same
-// decoupled-logging discipline as the earlier timing_diag: a cheap
-// struct write in the hot path (voice_engine_note_on/off, which already
-// run in task context, never the ISR), all ESP_LOGI dumping deferred to
-// its own low-priority task.
-#define VOICE_DIAG_RING_SIZE 64
-typedef struct {
-    int64_t us;
-    uint8_t note;
-    uint8_t velocity;
-    int8_t slot;          // assigned voice index; -1 = no region found for this note
-    int8_t active_before; // voices already active (non-free) before this decision;
-                           // for note_off, this holds the number of matching voices released instead
-} voice_diag_entry_t;
-static voice_diag_entry_t s_diag_ring[VOICE_DIAG_RING_SIZE];
-static volatile uint32_t s_diag_write_idx = 0;
-
-static void voice_diag_record(uint8_t note, uint8_t velocity, int8_t slot, int8_t active_before) {
-    voice_diag_entry_t *e = &s_diag_ring[s_diag_write_idx % VOICE_DIAG_RING_SIZE];
-    e->us = esp_timer_get_time();
-    e->note = note;
-    e->velocity = velocity;
-    e->slot = slot;
-    e->active_before = active_before;
-    s_diag_write_idx++;
-}
-
-static void voice_diag_task(void *arg) {
-    (void) arg;
-    int64_t last_us = 0;
-    uint32_t read_idx = 0;
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(300));
-        uint32_t write_snapshot = s_diag_write_idx;
-        if (write_snapshot - read_idx > VOICE_DIAG_RING_SIZE) {
-            read_idx = write_snapshot - VOICE_DIAG_RING_SIZE;
-        }
-        while (read_idx != write_snapshot) {
-            const voice_diag_entry_t *e = &s_diag_ring[read_idx % VOICE_DIAG_RING_SIZE];
-            int64_t delta_ms = (last_us == 0) ? 0 : (e->us - last_us) / 1000;
-            ESP_LOGI(TAG, "note=%3u vel=%3u slot=%d active_before=%d +%lldms",
-                     e->note, e->velocity, e->slot, e->active_before, (long long) delta_ms);
-            last_us = e->us;
-            read_idx++;
-        }
-    }
-}
-
-void voice_engine_start_diag_task(void) {
-    xTaskCreatePinnedToCore(voice_diag_task, "voice_diag", 4096, NULL, 1, NULL, 1);
-}
-
 static voice_t *find_voice_to_use(void) {
     for (int i = 0; i < MAX_POLYPHONY; i++) {
         if (s_voices[i].state == VOICE_FREE) {
@@ -299,7 +240,6 @@ void voice_engine_note_on(uint8_t channel, uint8_t note, uint8_t velocity) {
     }
     const nib_region_t *region = nib_find_region(bank, note, velocity);
     if (region == NULL) {
-        voice_diag_record(note, velocity, -1, -1);
         return; // key outside every region's range -- nothing to play
     }
 
@@ -338,14 +278,7 @@ void voice_engine_note_on(uint8_t channel, uint8_t note, uint8_t velocity) {
     }
 
     portENTER_CRITICAL(&s_voice_lock);
-    int8_t active_before = 0;
-    for (int i = 0; i < MAX_POLYPHONY; i++) {
-        if (s_voices[i].state != VOICE_FREE) {
-            active_before++;
-        }
-    }
     voice_t *voice = find_voice_to_use();
-    int8_t slot = (int8_t) (voice - s_voices);
     voice->state = VOICE_HELD;
     voice->bank = bank;
     voice->region = region;
@@ -379,7 +312,6 @@ void voice_engine_note_on(uint8_t channel, uint8_t note, uint8_t velocity) {
     voice->release_rate = 0;
     voice->age = ++s_voice_age_counter;
     portEXIT_CRITICAL(&s_voice_lock);
-    voice_diag_record(note, velocity, slot, active_before);
 }
 
 void voice_engine_note_off(uint8_t channel, uint8_t note) {
@@ -389,7 +321,6 @@ void voice_engine_note_off(uint8_t channel, uint8_t note) {
     }
 
     portENTER_CRITICAL(&s_voice_lock);
-    int8_t matched = 0;
     for (int i = 0; i < MAX_POLYPHONY; i++) {
         // Must match channel too, not just note -- piano and drums can
         // have voices sharing the same note number on different
@@ -398,11 +329,9 @@ void voice_engine_note_off(uint8_t channel, uint8_t note) {
         if (s_voices[i].state == VOICE_HELD && s_voices[i].note == note && s_voices[i].channel == channel) {
             s_voices[i].state = VOICE_RELEASING;
             s_voices[i].release_rate = release_rate;
-            matched++;
         }
     }
     portEXIT_CRITICAL(&s_voice_lock);
-    voice_diag_record(note, 0, -2, matched);
 }
 
 static inline void read_voice_frame(voice_t *voice, int32_t *left, int32_t *right) {

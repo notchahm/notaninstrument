@@ -4,7 +4,6 @@
 
 #include "esp_intr_alloc.h"
 #include "esp_log.h"
-#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -18,56 +17,6 @@ static const char *TAG = "usb_midi_host";
 #define CLASS_TASK_PRIORITY 5
 #define CLIENT_NUM_EVENT_MSG 5
 #define DEV_MAX_COUNT 16
-
-// TEMPORARY diagnostic (2026-09-07 chording-bug investigation): dumps
-// every raw 4-byte USB-MIDI Event Packet this code sees, cable/CIN byte
-// included, before any note/CC interpretation -- voice_engine.c's own
-// diagnostic showed Note Off events for notes whose Note On never
-// reached voice_engine_note_on at all, which could mean either the
-// device isn't sending them, or something in this file's own packet
-// decode is dropping/mis-parsing them. This settles which, by showing
-// the literal bytes. Same decoupled-logging discipline as the other
-// diagnostics in this investigation: a cheap struct write in the hot
-// path (the transfer completion callback), all ESP_LOGI dumping deferred
-// to its own low-priority task.
-#define RAW_DIAG_RING_SIZE 128
-typedef struct {
-    int64_t us;
-    uint8_t cin_byte; // pkt[0]: cable number (high nibble) | Code Index Number (low nibble)
-    uint8_t status;
-    uint8_t data1;
-    uint8_t data2;
-} raw_diag_entry_t;
-static raw_diag_entry_t s_raw_diag_ring[RAW_DIAG_RING_SIZE];
-static volatile uint32_t s_raw_diag_write_idx = 0;
-
-static void raw_diag_record(uint8_t cin_byte, uint8_t status, uint8_t data1, uint8_t data2) {
-    raw_diag_entry_t *e = &s_raw_diag_ring[s_raw_diag_write_idx % RAW_DIAG_RING_SIZE];
-    e->us = esp_timer_get_time();
-    e->cin_byte = cin_byte;
-    e->status = status;
-    e->data1 = data1;
-    e->data2 = data2;
-    s_raw_diag_write_idx++;
-}
-
-static void raw_diag_task(void *arg) {
-    (void) arg;
-    uint32_t read_idx = 0;
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(300));
-        uint32_t write_snapshot = s_raw_diag_write_idx;
-        if (write_snapshot - read_idx > RAW_DIAG_RING_SIZE) {
-            read_idx = write_snapshot - RAW_DIAG_RING_SIZE;
-        }
-        while (read_idx != write_snapshot) {
-            const raw_diag_entry_t *e = &s_raw_diag_ring[read_idx % RAW_DIAG_RING_SIZE];
-            ESP_LOGI(TAG, "RAW cin=%02x status=%02x d1=%3u d2=%3u",
-                     e->cin_byte, e->status, e->data1, e->data2);
-            read_idx++;
-        }
-    }
-}
 
 // ---- MIDI interface claim + perpetual bulk IN polling -------------------
 //
@@ -86,7 +35,6 @@ static void midi_transfer_cb(usb_transfer_t *transfer) {
             uint8_t status = pkt[1];
             uint8_t data1 = pkt[2];
             uint8_t data2 = pkt[3];
-            raw_diag_record(pkt[0], status, data1, data2);
             if (status != 0) {
                 usb_midi_on_event(status, data1, data2);
             }
@@ -121,8 +69,39 @@ static void midi_transfer_cb(usb_transfer_t *transfer) {
     }
 }
 
-static void midi_try_claim(usb_host_client_handle_t client_hdl, usb_device_handle_t dev_hdl,
-                            const usb_config_desc_t *config_desc) {
+typedef enum {
+    ACTION_OPEN_DEV = (1 << 0),
+    ACTION_GET_DEV_DESC = (1 << 1),
+    ACTION_GET_CONFIG_DESC = (1 << 2),
+    ACTION_CLOSE_DEV = (1 << 3),
+} action_t;
+
+typedef struct {
+    usb_host_client_handle_t client_hdl;
+    uint8_t dev_addr;
+    usb_device_handle_t dev_hdl;
+    action_t actions;
+    // Set by midi_try_claim() on a successful usb_host_interface_claim().
+    // Root-caused 2026-09-08: usb_host_device_close() unconditionally
+    // returns ESP_ERR_INVALID_STATE ("client has not released all
+    // interfaces") if a claimed interface is still open on the device --
+    // confirmed directly in usb_host.h's doc comments for both
+    // usb_host_device_close() and usb_host_interface_release(). This
+    // project's ACTION_CLOSE_DEV handling used to call device_close()
+    // directly with no matching interface_release() first, so it *always*
+    // failed on any device that ever had a MIDIStreaming interface claimed
+    // -- which, per the managed espressif__usb component's own hub.c, is
+    // exactly what gates the root port's internal device-free/recycle
+    // sequence, and therefore whether the port ever re-arms to detect a
+    // fresh connection. That silent, unconditional close failure -- not
+    // hub involvement specifically -- is what left the USB port
+    // permanently unable to detect any new device after a disconnect,
+    // confirmed reproducing identically with no hub at all involved.
+    bool interface_claimed;
+    uint8_t interface_number;
+} usb_device_t;
+
+static void midi_try_claim(usb_device_t *device, const usb_config_desc_t *config_desc) {
     for (uint8_t intf_num = 0; intf_num < config_desc->bNumInterfaces; intf_num++) {
         int offset = 0;
         const usb_intf_desc_t *intf_desc =
@@ -156,12 +135,14 @@ static void midi_try_claim(usb_host_client_handle_t client_hdl, usb_device_handl
             continue;
         }
 
-        esp_err_t err = usb_host_interface_claim(client_hdl, dev_hdl,
+        esp_err_t err = usb_host_interface_claim(device->client_hdl, device->dev_hdl,
                                                    intf_desc->bInterfaceNumber, 0);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "interface_claim failed: %s", esp_err_to_name(err));
             return;
         }
+        device->interface_claimed = true;
+        device->interface_number = intf_desc->bInterfaceNumber;
 
         uint16_t mps = USB_EP_DESC_GET_MPS(in_ep);
         usb_transfer_t *transfer;
@@ -170,7 +151,7 @@ static void midi_try_claim(usb_host_client_handle_t client_hdl, usb_device_handl
             ESP_LOGE(TAG, "transfer_alloc failed: %s", esp_err_to_name(err));
             return;
         }
-        transfer->device_handle = dev_hdl;
+        transfer->device_handle = device->dev_hdl;
         transfer->bEndpointAddress = in_ep->bEndpointAddress;
         transfer->num_bytes = mps;
         transfer->callback = midi_transfer_cb;
@@ -197,20 +178,8 @@ static void midi_try_claim(usb_host_client_handle_t client_hdl, usb_device_handl
 // firmware/spike-usb-host-native/), trimmed to what this project actually
 // needs: enumerate, fetch the config descriptor, hand it to
 // midi_try_claim() above. No app-quit/GPIO handling -- this runs forever.
-
-typedef enum {
-    ACTION_OPEN_DEV = (1 << 0),
-    ACTION_GET_DEV_DESC = (1 << 1),
-    ACTION_GET_CONFIG_DESC = (1 << 2),
-    ACTION_CLOSE_DEV = (1 << 3),
-} action_t;
-
-typedef struct {
-    usb_host_client_handle_t client_hdl;
-    uint8_t dev_addr;
-    usb_device_handle_t dev_hdl;
-    action_t actions;
-} usb_device_t;
+// (action_t/usb_device_t are defined above, next to midi_try_claim, since
+// that function now needs the full usb_device_t definition too.)
 
 static usb_device_t s_devices[DEV_MAX_COUNT];
 static volatile bool s_unhandled_devices = false;
@@ -236,6 +205,7 @@ static void client_event_cb(const usb_host_client_event_msg_t *event_msg, void *
         }
         s_devices[event_msg->new_dev.address].dev_addr = event_msg->new_dev.address;
         s_devices[event_msg->new_dev.address].dev_hdl = NULL;
+        s_devices[event_msg->new_dev.address].interface_claimed = false;
         s_devices[event_msg->new_dev.address].actions |= ACTION_OPEN_DEV;
         s_unhandled_devices = true;
         break;
@@ -260,15 +230,34 @@ static void client_event_cb(const usb_host_client_event_msg_t *event_msg, void *
 // disappear (unplugged, a hub resetting/losing power, a bus error)
 // between any two of these steps, and any of the four calls below can
 // then fail with a real, expected error rather than a programming bug.
-// Confirmed on real hardware: hot-swapping a MIDI controller onto a USB
-// hub mid-session made usb_host_device_close() return
-// ESP_ERR_INVALID_STATE (the device handle had already gone stale from
-// the hub's own instability -- see External Hubs support note in
-// usb_midi_host_start()), and ESP_ERROR_CHECK on that aborted the entire
-// firmware -- killing piano and drum playback too, not just the USB
-// connection. Logging and bailing out of *this device's* handling for
-// this cycle, rather than aborting the whole system, is what a class
-// driver actually needs to tolerate normal hot-plug/hot-unplug.
+// First confirmed on real hardware via a USB hub hot-swap, which made
+// usb_host_device_close() return ESP_ERR_INVALID_STATE; ESP_ERROR_CHECK
+// on that aborted the entire firmware -- killing piano and drum playback
+// too, not just the USB connection. Logging and bailing out of *this
+// device's* handling for this cycle, rather than aborting the whole
+// system, is what a class driver actually needs to tolerate normal
+// hot-plug/hot-unplug.
+//
+// That close-failure symptom's real cause, found later (2026-09-08) once
+// fixing the abort surfaced a second, deeper bug: it was never actually
+// about hub instability specifically -- device_close() unconditionally
+// returns ESP_ERR_INVALID_STATE if a claimed interface hasn't been
+// released first (usb_host.h's own doc comments for both
+// usb_host_device_close() and usb_host_interface_release() say so
+// directly), and this file claimed a MIDIStreaming interface in
+// midi_try_claim() but never released it anywhere. Confirmed reproducing
+// identically on a plain direct connection with no hub at all involved.
+// Worse than a cosmetic log message: per the managed espressif__usb
+// component's own hub.c, the root port's internal device-free/recycle
+// sequence -- and therefore whether that port can ever detect a *new*
+// connection -- is gated on the close actually succeeding. So every
+// disconnect permanently wedged the port (traced with runtime
+// esp_log_level_set("HUB"/"USBH", ESP_LOG_DEBUG) tracing the vendored
+// driver's own root_port_handle_events()/dev_tree_node_dev_gone(), which
+// showed "Root port reset"/"New device N" never appearing again after
+// any disconnect) until the whole board was reset. See
+// usb_device_t.interface_claimed above and its use in ACTION_CLOSE_DEV
+// below for the actual fix: release before close, every time.
 static void handle_device(usb_device_t *device) {
     uint8_t actions = device->actions;
     device->actions = 0;
@@ -302,9 +291,23 @@ static void handle_device(usb_device_t *device) {
                      device->dev_addr, esp_err_to_name(err));
             return;
         }
-        midi_try_claim(device->client_hdl, device->dev_hdl, config_desc);
+        midi_try_claim(device, config_desc);
     }
     if (actions & ACTION_CLOSE_DEV) {
+        // Must release any claimed interface BEFORE closing -- see
+        // usb_device_t's interface_claimed comment. Attempted
+        // unconditionally: even if release itself fails (device already
+        // fully gone at a lower level), still attempt the close below
+        // rather than leaving the device open on our side too.
+        if (device->interface_claimed) {
+            esp_err_t rel_err = usb_host_interface_release(device->client_hdl, device->dev_hdl,
+                                                              device->interface_number);
+            if (rel_err != ESP_OK) {
+                ESP_LOGW(TAG, "interface_release failed for address %d: %s -- attempting close anyway",
+                         device->dev_addr, esp_err_to_name(rel_err));
+            }
+            device->interface_claimed = false;
+        }
         esp_err_t err = usb_host_device_close(device->client_hdl, device->dev_hdl);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "device_close failed for address %d: %s -- device already gone, "
@@ -371,8 +374,6 @@ static void usb_host_lib_task(void *arg) {
 }
 
 void usb_midi_host_start(void) {
-    xTaskCreatePinnedToCore(raw_diag_task, "usb_midi_raw_diag", 4096, NULL, 1, NULL, 1);
-
     TaskHandle_t host_lib_task_hdl;
     xTaskCreatePinnedToCore(usb_host_lib_task, "usb_host", 4096, xTaskGetCurrentTaskHandle(),
                              HOST_LIB_TASK_PRIORITY, &host_lib_task_hdl, 0);

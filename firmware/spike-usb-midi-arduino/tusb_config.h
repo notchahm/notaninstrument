@@ -2,7 +2,7 @@
 
 // Sketch-local override of Adafruit TinyUSB Library's default tusb_config.h
 // (Arduino puts the sketch directory first on the include path). Mirrors
-// ../spike-usb-midi-idf/main/tusb_config.h so both spikes exercise the same
+// ../notaninstrument-p4/main/tusb_config.h so both spikes exercise the same
 // host/MIDI configuration for a fair pass/fail comparison.
 //
 // CFG_TUSB_MCU is intentionally omitted here -- the Arduino-ESP32 core's

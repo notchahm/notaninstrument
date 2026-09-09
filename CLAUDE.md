@@ -136,7 +136,7 @@ earlier RP2350 (Raspberry Pi Pico 2) prototype. It has:
    published `espressif/tinyusb` *registry component* turned out to be
    device-mode only (its own `CMakeLists.txt` never builds `usbh.c`,
    `hcd_dwc2.c`, or `midi_host.c`, regardless of config) -- so
-   `firmware/spike-usb-midi-idf/` vendored those files itself in
+   `firmware/notaninstrument-p4/` vendored those files itself in
    `components/tinyusb_host/` (same upstream source, `git://github.com/
    espressif/tinyusb.git`, just with a from-scratch `CMakeLists.txt`
    building the host-mode file set). That built end-to-end with no
@@ -182,8 +182,8 @@ earlier RP2350 (Raspberry Pi Pico 2) prototype. It has:
    session, zero code changes): a Korg padKONTROL (different vendor,
    multi-cable device vs. the AKAI's single cable) also enumerated and
    streamed correctly-decoded MIDI data -- see
-   `firmware/spike-usb-midi-idf/README.md` for the log.
-   **Net result: both `firmware/spike-usb-midi-idf/` (TinyUSB) and
+   `firmware/notaninstrument-p4/README.md` for the log.
+   **Net result: both `firmware/notaninstrument-p4/` (TinyUSB) and
    `firmware/spike-usb-host-native/` (native USB Host Library) work on
    real hardware, on the correct port.** TinyUSB is the more complete
    result of the two and the recommended path going forward: its
@@ -203,7 +203,7 @@ earlier RP2350 (Raspberry Pi Pico 2) prototype. It has:
    plausibly simpler always-on fixed host ports. See
    `docs/hardware-bom.md`.
    **Next**: build the real voice-triggering pipeline on
-   `firmware/spike-usb-midi-idf`'s proven `tuh_midi_rx_cb` foundation --
+   `firmware/notaninstrument-p4`'s proven `tuh_midi_rx_cb` foundation --
    parse incoming Note On/Off bytes into `start_note`/`stop_note` calls
    (architecture decisions #1-#3), continuing the bring-up plan from
    there.
@@ -244,31 +244,67 @@ earlier RP2350 (Raspberry Pi Pico 2) prototype. It has:
    `midi_host.c` gives for free) versus continuing to root-cause the exact
    spot in vendored TinyUSB/DWC2 code responsible, is in
    `docs/polyphony-latency-investigation.md`.
+   **UPDATE 2026-09-08 -- USB port permanently stopped detecting new
+   devices after any disconnect, root-caused and fixed:** a USB hub
+   hot-swap crash (`usb_midi_host.c`'s device lifecycle calls
+   unconditionally wrapped in `ESP_ERROR_CHECK`, aborting the whole
+   firmware when `usb_host_device_close()` returned
+   `ESP_ERR_INVALID_STATE` on a legitimately-gone device) was fixed by
+   logging and returning instead of aborting. That stopped the crash, but
+   real-hardware retesting found the underlying symptom was still there in
+   a different form: after *any* USB disconnect -- confirmed reproducing
+   identically with no hub at all involved, a plain direct connect/
+   disconnect/reconnect -- the board would never detect a new device on
+   that port again until fully reset. Root-caused by temporarily compiling
+   in the managed `espressif__usb` component's own `ESP_LOGD` calls
+   (`CONFIG_LOG_MAXIMUM_LEVEL_DEBUG`, `esp_log_level_set("HUB"/"USBH",
+   ESP_LOG_DEBUG)` at boot) and tracing its internal `hub.c`/`usbh.c`
+   device-free lifecycle directly: `usb_host_device_close()`
+   unconditionally returns `ESP_ERR_INVALID_STATE` if a client hasn't
+   released every interface it claimed on that device first (documented
+   directly in `usb_host.h`), and `usb_midi_host.c`'s `midi_try_claim()`
+   claimed a MIDIStreaming interface but never released it anywhere. Per
+   the vendored `hub.c`'s own logic, the root port's internal device-free/
+   recycle sequence -- and therefore whether that port can ever detect a
+   *new* connection -- is gated on the close actually succeeding, so this
+   one missing `usb_host_interface_release()` call permanently wedged the
+   port on every single disconnect. Fixed by tracking whether an interface
+   was claimed per device (`usb_device_t.interface_claimed`) and releasing
+   it before every `usb_host_device_close()` call. Confirmed on real
+   hardware: the disconnect/reconnect cycle now completes cleanly and
+   repeats reliably across many cycles, including through a hub and with a
+   second simultaneously-connected MIDI device. Debug logging reverted
+   afterward; the fix itself is permanent. Regression test:
+   `test/usb_midi_host/device_lifecycle_error_handling_test.c`.
 
 ## Bring-up plan (in order — see docs/bring-up-plan.md for full detail)
 
-1. Toolchain + basic board bring-up (confirm PSRAM detected correctly)
-2. **USB MIDI host spike test — do this before anything else substantial**
-3. SSD1306 display bring-up
-4. PCM5102/I2S audio output path (single test tone/WAV)
-5. Soundbank pipeline: offline SFZ→binary tool + on-device SD→PSRAM loading
-6. Single-voice integration: one MIDI note plays one real sample
-7. Voice manager: polyphony + release envelopes
+1. Toolchain + basic board bring-up (confirm PSRAM detected correctly) — DONE
+2. **USB MIDI host spike test — do this before anything else substantial** — DONE
+3. SSD1306 display bring-up — DONE
+4. PCM5102/I2S audio output path (single test tone/WAV) — DONE
+5. Soundbank pipeline: offline SFZ→binary tool + on-device SD→PSRAM loading — DONE (loads from a dedicated flash partition instead of streaming SD, see architecture decision #1)
+6. Single-voice integration: one MIDI note plays one real sample — DONE
+7. Voice manager: polyphony + release envelopes — DONE
 8. Power/battery sizing (measure real current draw first — this board draws
    more than the RP2350 prototype did, due to the onboard C6 co-processor
-   and USB hub chip)
+   and USB hub chip) — not started
+
+All of steps 2-7 now live in one place: `firmware/notaninstrument-p4/`, the
+official firmware (see "Repo layout" below) — not separate spikes anymore.
+See `docs/bring-up-plan.md` for the full detail behind each DONE marker.
 
 ## Toolchain setup
 
 **UPDATE 2026-09-06:** decision #4's spikes now point at ESP-IDF as
 primary, not Arduino-ESP32 (Arduino's USB host support is confirmed broken
 for this board, see decision #4). ESP-IDF v6.1 (`esp32p4` target only) has
-been installed and validated against `firmware/spike-usb-midi-idf/` — clone
+been installed and validated against `firmware/notaninstrument-p4/` — clone
 with `git clone -b v6.1 --recursive --depth 1 --shallow-submodules
 https://github.com/espressif/esp-idf.git`, then `./install.sh esp32p4`,
 then `. ./export.sh` in each new shell before running `idf.py`/`make` in
-any `firmware/spike-usb-midi-idf`-style project. Arduino-ESP32 setup below
-is kept for `firmware/notaninstrument-p4/` (blink/serial/PSRAM bring-up
+any `firmware/notaninstrument-p4`-style project. Arduino-ESP32 setup below
+is kept for `firmware/bringup-arduino-p4/` (blink/serial/PSRAM bring-up
 only — that part doesn't touch USB host, so Arduino is fine for it) and for
 historical/comparison purposes.
 
@@ -306,41 +342,48 @@ firmware/
                               spike-usb-midi-arduino's known compile
                               failure as an XFAIL, not a permanent red
                               herring -- flagged if it ever changes)
-  notaninstrument-p4/     -- active P4 firmware (bring-up step 1: blink +
-                              serial/PSRAM check, Makefile wraps arduino-cli)
-  spike-usb-midi-idf/     -- bring-up step 2, WINNING PATH: PASSED on real
-                              hardware, raw ESP-IDF + TinyUSB (tuh_*), no
-                              Arduino. Confirmed enumerating a real AKAI MPK
-                              Mini Play mk3 with real-time MIDI performance
-                              data flowing through tuh_midi_rx_cb. Recommended
-                              primary path -- see architecture decision #4
-                              for the full story (three real bugs found and
-                              fixed, one false "abandon" conclusion later
-                              corrected). Vendors its own host-mode TinyUSB
-                              in components/tinyusb_host/ (the published
-                              registry component is device-mode only).
+  bringup-arduino-p4/     -- superseded: the original bring-up step 1
+                              toolchain smoke test (blink + serial/PSRAM
+                              check), Arduino-ESP32, Makefile wraps
+                              arduino-cli. Kept for historical/comparison
+                              purposes only -- notaninstrument-p4/ below is
+                              the real firmware now.
+  notaninstrument-p4/     -- THE OFFICIAL FIRMWARE. ESP-IDF, no Arduino.
+                              USB MIDI host (native USB Host Library, see
+                              below -- not TinyUSB), SSD1306 display,
+                              polyphonic voice engine with two channel-
+                              routed built-in instruments (Salamander piano
+                              + Virtuosity drums on MIDI channel 10),
+                              PCM5102A stereo output. See its own
+                              README.md for the full feature rundown and
+                              architecture decision #4 for how the USB host
+                              path landed on the native library over
+                              TinyUSB (three real TinyUSB bugs found and
+                              fixed along the way, then a chord-latency
+                              investigation found a ~242ms TinyUSB-specific
+                              driver-stack delay that the native library
+                              doesn't have). Vendors TinyUSB's host-mode
+                              source in components/tinyusb_host/ as an
+                              excluded-from-build reference only (the
+                              published registry component is device-mode
+                              only, so this was hand-vendored when TinyUSB
+                              was still the primary path). Makefile wraps
+                              idf.py; `make flash-soundbank`/
+                              `make flash-drumkit` flash the two instrument
+                              partitions independently of the app.
+  spike-usb-host-native/  -- reference/fallback: an earlier, minimal
+                              proof-of-concept for ESP-IDF's native USB
+                              Host Library (single-cable MIDI IN parsing
+                              only, no multi-cable/jack handling) --
+                              superseded by the fuller implementation now
+                              in notaninstrument-p4/main/usb_midi_host.c,
+                              but kept as the polyphony-latency
+                              investigation's control group (see
+                              docs/polyphony-latency-investigation.md).
                               Makefile wraps idf.py.
-  spike-usb-host-native/  -- bring-up step 2, proven fallback, now also
-                              the polyphony-latency investigation's control
-                              group: ESP-IDF's native USB Host Library
-                              (espressif/usb component), not TinyUSB.
-                              Confirmed enumerating the same real MPK Mini
-                              Play. Originally descriptor-dump only; gained
-                              a minimal single-cable MIDI IN parser
-                              (main/midi_native.c, 2026-09-07) purpose-built
-                              to compare chord-onset timing against the
-                              TinyUSB path -- see architecture decision #4's
-                              2026-09-07 update and
-                              docs/polyphony-latency-investigation.md.
-                              Not a general MIDI class driver (no
-                              multi-cable/jack handling, unlike TinyUSB's
-                              ready-made midi_host.c) -- still a reference/
-                              fallback, not the primary path, pending the
-                              decision documented there. Makefile wraps
-                              idf.py.
-  spike-usb-midi-arduino/ -- bring-up step 2, abandoned path: Arduino-ESP32
-                              + Adafruit TinyUSB, confirmed dead end before
-                              even reaching hardware (forces an external
+  spike-usb-midi-arduino/ -- abandoned path: Arduino-ESP32 + Adafruit
+                              TinyUSB, confirmed dead end before even
+                              reaching hardware (forces an external
                               MAX3421E host chip not in this project's BOM).
                               Makefile wraps arduino-cli.
   reference-rp2350/       -- prior working RP2350 sketch, reference only
@@ -365,9 +408,18 @@ docs/
   dynamic-sampling.md             -- stretch goal: turn live-recorded audio
                                       into a new playable instrument on-device
   dongle-dock-architecture.md     -- stretch goal: dongle/dock modularity
-  second-instrument-drums-todo.md -- investigated-not-started: adding a
-                                      drum kit as the second .nib
-                                      instrument, parser gap analysis
+  second-instrument-drums-todo.md -- DONE, shipped: the drum-kit .nib
+                                      instrument on MIDI channel 10, now
+                                      built from DrumGizmo MuldjordKit
+                                      (tools/sfz_preprocessor/
+                                      muldjordkit_to_nib.py) -- see
+                                      CREDITS.md for attribution (CC-BY
+                                      4.0, unlike the original CC0
+                                      virtuosity_drums content it
+                                      replaced). Kept as the original
+                                      parser-gap analysis and scope
+                                      decisions that both drum-kit
+                                      scripts share
   polyphony-latency-investigation.md -- ongoing: chord-onset lag, what's
                                       been tried, the ISR/FPU dead end and
                                       why, the identified fixed-point path

@@ -59,3 +59,22 @@ Tunable via flags: `--velocity-layers`, `--attack-seconds`,
 `--loop-seconds`, `--crossfade-ms`, `--sample-rate`. Confirmed output
 (defaults, full 88-key range): 116 regions (29 recorded pitches x 4
 velocity layers), 8.91MB.
+
+## Drum kit: `muldjordkit_to_nib.py`
+
+Converts a local clone of
+[sfzinstruments/DrumGizmo.MuldjordKit](https://github.com/sfzinstruments/DrumGizmo.MuldjordKit)
+(CC-BY 4.0 -- see `CREDITS.md` at the repo root) into the `.nib` flashed to
+the `drumkit` partition (built-in kit on MIDI channel 10). See its module
+docstring for the full scope (single overhead mic pair, core 16 keys,
+reduced velocity/round-robin, one-shot only, per-region peak
+normalization to correct the raw overhead mic's very uneven per-piece
+levels).
+
+```
+git clone https://github.com/sfzinstruments/DrumGizmo.MuldjordKit.git
+venv/bin/python3 muldjordkit_to_nib.py DrumGizmo.MuldjordKit -o testdata/muldjordkit_drums.nib
+```
+
+`virtuosity_to_nib.py` (a different kit, CC0) remains in the repo as a
+reference/fallback -- not the active builder.

@@ -1,5 +1,5 @@
-# Minimal defaults for the USB-MIDI host spike. `idf.py set-target esp32p4`
-# (see Makefile) fills in the rest of sdkconfig on first build.
+# Defaults for the official notaninstrument firmware. `idf.py set-target
+# esp32p4` (see Makefile) fills in the rest of sdkconfig on first build.
 CONFIG_IDF_TARGET="esp32p4"
 
 # Custom partition table (partitions.csv) -- adds a dedicated "soundbank"
@@ -16,13 +16,15 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
 
 # External USB hub support -- off by default in the espressif__usb
-# managed component. Confirmed on real hardware this project needs it:
-# without it, the native USB Host Library can't properly manage a hub's
-# downstream port topology (power/reset/disconnect propagation), so a
-# hub hot-swapped in mid-session enumerates unreliably and can leave a
-# connected MIDI controller's device handle in a stale state (see
-# usb_midi_host.c's handle_device() for the crash that used to cause on
-# top of the instability itself).
+# managed component, and needed here since a USB hub plugged into this
+# board's one working port is the recommended way to use multiple
+# simultaneous MIDI controllers (docs/hardware-bom.md). Note: an earlier
+# comment here attributed a hub-hotswap crash to "the hub's own
+# instability" -- that specific device_close() failure turned out to be a
+# real bug in this project's own usb_midi_host.c (a claimed interface
+# never released before closing, unrelated to hubs at all -- see
+# handle_device()'s ACTION_CLOSE_DEV comment), not anything about hub
+# behavior needing this option.
 CONFIG_USB_HOST_HUBS_SUPPORTED=y
 
 # PSRAM is NOT enabled here: the soundbank pipeline went through two
@@ -32,5 +34,5 @@ CONFIG_USB_HOST_HUBS_SUPPORTED=y
 # see tools/sfz_preprocessor/sfz_to_nib.py's module docstring for the
 # full history of why. Neither PSRAM nor a boot-time decode step is
 # needed for this design; re-add CONFIG_SPIRAM=y (this board does have
-# 32MB, confirmed via firmware/notaninstrument-p4's bring-up) if a future
+# 32MB, confirmed via firmware/bringup-arduino-p4's bring-up) if a future
 # feature actually needs it.

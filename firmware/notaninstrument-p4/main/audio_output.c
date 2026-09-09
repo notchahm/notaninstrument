@@ -8,7 +8,7 @@
 static const char *TAG = "audio_output";
 
 // PCM5102A wiring, confirmed on real hardware via
-// firmware/notaninstrument-p4 (docs/hardware-bom.md): BCK=GPIO4,
+// firmware/bringup-arduino-p4 (docs/hardware-bom.md): BCK=GPIO4,
 // LRCK/WS=GPIO5, DIN=GPIO6. No MCLK connected -- the DAC derives its own
 // clock internally via its onboard PLL, using BCK as reference.
 #define I2S_BCK_GPIO  GPIO_NUM_4
@@ -17,7 +17,7 @@ static const char *TAG = "audio_output";
 
 // This module breaks XSMT/FMT/FLT out to pins instead of hard-wiring them
 // on-board, so they float (undefined logic level) until driven. Real
-// hardware gotcha, also confirmed via firmware/notaninstrument-p4: this
+// hardware gotcha, also confirmed via firmware/bringup-arduino-p4: this
 // module additionally has a separate SCK pin (distinct from BCK) that
 // must be tied directly to GND -- not a GPIO, a physical wire -- to
 // select the DAC's internal-PLL clock mode. Without that, it stays

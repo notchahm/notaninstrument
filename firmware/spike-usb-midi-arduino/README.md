@@ -1,7 +1,7 @@
 # spike-usb-midi-arduino
 
 Bring-up step 2 (`docs/bring-up-plan.md`): USB-MIDI host spike test on the
-**Arduino-ESP32 + Adafruit TinyUSB** path. See `../spike-usb-midi-idf/` for
+**Arduino-ESP32 + Adafruit TinyUSB** path. See `../notaninstrument-p4/` for
 the same test built directly on ESP-IDF + TinyUSB, no Arduino involved
 (CLAUDE.md architecture decision #4) -- both spikes implement identical
 `tuh_midi_*` callbacks so their results are directly comparable.
@@ -44,7 +44,7 @@ cannot drive this board's native USB-A host ports for USB-MIDI at all.**
 This is itself a real result for CLAUDE.md architecture decision #4's
 spike test -- effectively a "fail" for the Arduino path, discovered via
 static analysis of the installed toolchain rather than by plugging in
-actual hardware. See `../spike-usb-midi-idf/`, which uses
+actual hardware. See `../notaninstrument-p4/`, which uses
 `espressif/tinyusb` directly and does have confirmed native ESP32-P4 DWC2
 host-controller support (landed ~tinyusb v0.15) -- that path doesn't
 inherit this Arduino-specific restriction.
@@ -96,7 +96,7 @@ not just Adafruit's thin Arduino wrapper. That's a real, doable option, but
 a much bigger lift (a full ESP-IDF cross-build, likely hours, then
 redistributing the result as a custom board package) than "fork one
 GitHub library" -- and it would produce, at best, the same native P4 DWC2
-host capability that `../spike-usb-midi-idf/` already gets directly and
+host capability that `../notaninstrument-p4/` already gets directly and
 far more cheaply by building against ESP-IDF's `espressif/tinyusb`
 component fresh from source, with no prebuilt-static-library boundary in
 the way. Recommendation: don't fork/rebuild the Arduino toolchain for
@@ -107,7 +107,7 @@ this -- put the effort into the ESP-IDF path instead.
 - `arduino-cli` on `PATH`.
 - `make setup` -- registers the ESP32 board index, installs the `esp32:esp32`
   core, and installs the "Adafruit TinyUSB Library". (If you already ran
-  `make setup` in `../notaninstrument-p4/`, only the library install here is
+  `make setup` in `../bringup-arduino-p4/`, only the library install here is
   new.)
 
 ## Build and flash
@@ -129,7 +129,7 @@ Or `make all PORT=/dev/ttyUSB0` for build + flash + monitor together.
   continue building the real project on Arduino.
 - **Fail:** nothing logs on connect, `tuh_mount_cb` fires but
   `tuh_midi_mount_cb` never does, or a crash/hang on connect. Per decision
-  #4, this means pivot to raw ESP-IDF (see `../spike-usb-midi-idf/`) for the
+  #4, this means pivot to raw ESP-IDF (see `../notaninstrument-p4/`) for the
   real project.
 
 ## Known TBD

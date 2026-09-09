@@ -188,7 +188,7 @@ def ensure_qoa_encoder_built():
 
 def ensure_qoa_decoder_built():
     """Compiles qoa/qoa_decode_cli.c on first use -- a thin CLI wrapper
-    around the real production decoder (firmware/spike-usb-midi-idf/main/
+    around the real production decoder (firmware/notaninstrument-p4/main/
     qoa_decode.c, included directly, not reimplemented) used only by
     find_qoa_raw_prefix_samples() to check what real hardware would
     actually decode for a candidate prefix width."""

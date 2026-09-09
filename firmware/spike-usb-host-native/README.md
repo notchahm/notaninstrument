@@ -2,11 +2,11 @@
 
 Bring-up step 2 (`docs/bring-up-plan.md`) — **PASSED, on real hardware,
 2026-09-06**, but now a **proven fallback, not the primary path** — see
-`../spike-usb-midi-idf/README.md` for the full, corrected story.
+`../notaninstrument-p4/README.md` for the full, corrected story.
 
 Short version: this path (ESP-IDF's own first-party **USB Host Library**,
 `usb/usb_host.h`, not TinyUSB) was originally reached for after
-`spike-usb-midi-idf`'s TinyUSB build appeared to hit a real driver bug
+`notaninstrument-p4`'s TinyUSB build appeared to hit a real driver bug
 (its connect/disconnect interrupt never firing) on real hardware. This
 path passed immediately, which looked like confirmation TinyUSB was
 genuinely broken. **It wasn't** — the real cause, discovered afterward, was
@@ -92,7 +92,7 @@ board's serial port passed through.
 
 ## What's next
 
-Not this path, for now — `../spike-usb-midi-idf/` already has working
+Not this path, for now — `../notaninstrument-p4/` already has working
 MIDI event parsing via TinyUSB's `midi_host.c`, confirmed on real
 hardware, and is the recommended path going forward. This spike stays as
 a working reference in case TinyUSB ever needs to be revisited (a real

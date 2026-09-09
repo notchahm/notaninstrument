@@ -10,4 +10,4 @@ cmake_minimum_required(VERSION 3.16)
 set(EXCLUDE_COMPONENTS "tinyusb_host")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(spike_usb_midi_idf)
+project(notaninstrument_p4)

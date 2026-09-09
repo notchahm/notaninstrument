@@ -6,7 +6,7 @@
 // portion requires decoding a real candidate encoding and comparing it
 // against the clean source, not just guessing from the encoder side).
 //
-// #includes the real production decoder (../../firmware/spike-usb-midi-idf/
+// #includes the real production decoder (../../firmware/notaninstrument-p4/
 // main/qoa_decode.c) unmodified, the same "never drift from what ships"
 // principle the firmware's own test/voice_engine/*.c regression tests
 // use -- this tool's whole point is to answer "what would the real
@@ -18,7 +18,7 @@
 // decoded interleaved-stereo 16-bit PCM to stdout -- no WAV header,
 // since the caller (sfz_to_nib.py) already knows the sample rate/format
 // and just wants raw samples for spectral analysis.
-#include "../../../firmware/spike-usb-midi-idf/main/qoa_decode.c"
+#include "../../../firmware/notaninstrument-p4/main/qoa_decode.c"
 
 #include <stdio.h>
 #include <stdlib.h>

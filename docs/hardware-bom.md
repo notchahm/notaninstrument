@@ -37,7 +37,7 @@ bus-powered test device (a USB mouse showed no sign of life on the
 jumper-adjacent port, but powered up immediately on a different one; the
 same non-jumper-adjacent port then successfully enumerated both the mouse
 and an AKAI MPK Mini Play mk3, confirmed independently via both
-`firmware/spike-usb-host-native/` and `firmware/spike-usb-midi-idf/`
+`firmware/spike-usb-host-native/` and `firmware/notaninstrument-p4/`
 (TinyUSB) — the latter had been misdiagnosed as having a driver bug before
 this port finding explained the real cause; see that spike's README for
 the full story).
@@ -143,7 +143,7 @@ below.
 **Practical resolution, confirmed working**: rather than debug the
 onboard hub further, plug a standard external USB hub into the one
 port that works. TinyUSB's host stack already has `CFG_TUH_HUB` and
-multi-device support enabled (`firmware/spike-usb-midi-idf/main/tusb_config.h`)
+multi-device support enabled (`firmware/notaninstrument-p4/main/tusb_config.h`)
 and doesn't care whether a hub is onboard or external — confirmed on real
 hardware with 2 simultaneous class-compliant MIDI controllers through an
 external hub, both mounting as distinct interfaces (`idx=0`, `idx=1`) and
@@ -166,7 +166,7 @@ hub ever becomes a real constraint (e.g. enclosure space).
 | PCM5102A FLT | GPIO1 | Filter-response select, driven LOW (normal/sharp roll-off) by firmware. |
 | PCM5102A SCK | tied directly to GND (not a GPIO) | **Real hardware gotcha, confirmed 2026-09-06**: this module also breaks out a separate SCK pin (distinct from BCK) that must be grounded to select internal-PLL clock mode. Left floating, the DAC never locks onto a clock and stays completely silent despite otherwise-correct I2S data, unmuted XSMT, and zero I2S driver errors -- this was the actual root cause of an extended "no sound" investigation, not a firmware bug. |
 
-An I2C bus scan on these pins (`firmware/notaninstrument-p4`'s
+An I2C bus scan on these pins (`firmware/bringup-arduino-p4`'s
 `scan_i2c_bus()`) found the SSD1306 at `0x3C` and a second device at
 `0x18` -- almost certainly the onboard ES8311 codec, whose default I2C
 address is commonly `0x18`. **This confirms GPIO7/GPIO8 are the same I2C
@@ -180,7 +180,7 @@ vendor schematic, 2026-09-06) -- the only LED (`LED1`, near the USB power
 section) is a fixed power-on indicator wired straight to `VCC_5V`, not
 software-controllable. (`LED0`/`LED1-4`/etc. elsewhere in the schematic
 belong to the CH334F hub and Ethernet PHY chips' own status outputs, not
-the ESP32-P4.) `firmware/notaninstrument-p4`'s blink is a pure software
+the ESP32-P4.) `firmware/bringup-arduino-p4`'s blink is a pure software
 heartbeat with no physical indicator -- it originally used GPIO2, which
 turned out to double as the PCM5102A's FMT pin above and caused an
 audible artifact; now on GPIO22, a plain unused header pin.

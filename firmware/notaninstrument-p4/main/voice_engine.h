@@ -18,11 +18,6 @@
 // challenge -- see MAX_POLYPHONY in voice_engine.c.
 bool voice_engine_init(void);
 
-// TEMPORARY (2026-09-07 chording-bug investigation, see voice_engine.c):
-// starts a low-priority task that dumps each note_on/off's voice-
-// allocation decision. Safe to leave off in normal use.
-void voice_engine_start_diag_task(void);
-
 // channel is the raw 0-15 MIDI channel (status byte's low nibble) --
 // channel 9 (human-numbered channel 10, the GM percussion convention)
 // routes to the built-in drum kit; every other channel plays piano. See

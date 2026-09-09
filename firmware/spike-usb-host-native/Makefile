@@ -2,7 +2,7 @@
 # (docs/bring-up-plan.md step 2, pivot). Built on ESP-IDF's own first-party
 # USB Host Library (usb/usb_host.h -- the `espressif/usb` component, fetched
 # by the component manager) rather than TinyUSB -- see
-# ../spike-usb-midi-idf/README.md for why: that path's vendored TinyUSB
+# ../notaninstrument-p4/README.md for why: that path's vendored TinyUSB
 # fork's connect/disconnect interrupt never fired on real hardware despite
 # correct-looking register-level init, a deep enough gap that CLAUDE.md's
 # own pre-planned fallback (architecture decision #4) was invoked.
